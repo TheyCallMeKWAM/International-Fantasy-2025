@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>International Fantasy</title>
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase config + season constant -->
+  <script type="module">
+    // 🔧 Fill with your Firebase Web config
+    export const firebaseConfig = {
+        apiKey: "AIzaSyAx8jWSAZdR_rzgVP8XumxNOvsy86bjl-Q",
+        authDomain: "internationalfantasy2025.firebaseapp.com",
+        projectId: "internationalfantasy2025",
+        storageBucket: "internationalfantasy2025.firebasestorage.app",
+        messagingSenderId: "864977028555",
+        appId: "1:864977028555:web:8038b630cba08cc661624e"
+    };
+    // Single-season focus
+    export const CURRENT_TID = "ti2025";
+  </script>
+  <style>
+    body { background: radial-gradient(60% 40% at 50% 0%, rgba(255,255,255,.05), rgba(0,0,0,.6)), #0b0d0f; color:#e6e8eb; }
+    .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.06); }
+    .tab-active { background: #1f2937; }
+    input,select,textarea { color:#0b0d0f }
+  </style>
+</head>
+<body class="min-h-screen">
+  <header class="max-w-6xl mx-auto px-4 py-6 flex items-center justify-between">
+    <h1 class="text-2xl md:text-3xl font-extrabold tracking-wide">INTERNATIONAL FANTASY</h1>
+    <div id="authBox" class="flex gap-2 items-center"></div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 pb-24">
+    <!-- Tabs -->
+    <div class="flex gap-2 mb-6">
+      <button id="tabLeaderboard" class="px-4 py-2 rounded-xl card tab-active">Leaderboard</button>
+      <button id="tabSubmit" class="px-4 py-2 rounded-xl card">Submit Lineup</button>
+      <div class="ml-auto hidden md:flex items-center gap-2 text-sm text-gray-300">
+        <span>Season:</span>
+        <span class="px-3 py-1 rounded-full bg-emerald-600/30 border border-emerald-600/40">TI 2025</span>
+      </div>
+    </div>
+
+    <!-- Leaderboard -->
+    <section id="leaderboardPanel" class="card rounded-2xl p-4 md:p-6 shadow-xl">
+      <div class="flex flex-col md:flex-row md:items-end gap-3 mb-4">
+        <div class="grow">
+          <label class="block text-sm mb-1">Tournament</label>
+          <input id="lb_tid" class="w-full rounded-lg px-3 py-2 bg-white" value="ti2025" disabled />
+        </div>
+        <div class="grow">
+          <label class="block text-sm mb-1">Sort</label>
+          <select id="lb_sort" class="w-full rounded-lg px-3 py-2 bg-white">
+            <option value="total_desc">Total (high → low)</option>
+            <option value="total_asc">Total (low → high)</option>
+            <option value="date_desc">By Date (latest first)</option>
+            <option value="date_asc">By Date (oldest first)</option>
+          </select>
+        </div>
+        <button id="btnLoadLb" class="h-10 px-4 rounded-xl bg-emerald-500 text-white font-semibold">Load Leaderboards</button>
+      </div>
+
+      <div id="lbDates" class="flex flex-wrap gap-2 mb-3"></div>
+      <div id="lbStatus" class="text-sm text-gray-300 mb-3"></div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-gray-300" id="lbHead"></thead>
+          <tbody id="lbRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Submit Lineup -->
+    <section id="submitPanel" class="card rounded-2xl p-4 md:p-6 shadow-xl mt-6 hidden">
+      <p class="text-sm text-gray-300 mb-4">Sign in with email/password to submit. Lineups lock at the configured UTC hour for the tournament.</p>
+      <div class="mb-4 flex items-center gap-3 text-sm">
+        <label class="inline-flex items-center gap-2"><input id="rememberMe" type="checkbox" class="w-4 h-4"> Remember me</label>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm mb-1">Tournament ID (tid)</label>
+          <input id="sl_tid" class="w-full rounded-lg px-3 py-2 bg-white" value="ti2025" disabled />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Date (YYYYMMDD)</label>
+          <input id="sl_dateKey" class="w-full rounded-lg px-3 py-2 bg-white" placeholder="20250829" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Captain (steam32)</label>
+          <input id="sl_captain" type="number" class="w-full rounded-lg px-3 py-2 bg-white" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Cores (3× steam32, comma-separated)</label>
+          <input id="sl_cores" class="w-full rounded-lg px-3 py-2 bg-white" placeholder="123,456,789" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Supports (2× steam32, comma-separated)</label>
+          <input id="sl_supports" class="w-full rounded-lg px-3 py-2 bg-white" placeholder="123,456" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Team Card (orgId)</label>
+          <input id="sl_teamCard" class="w-full rounded-lg px-3 py-2 bg-white" placeholder="ORG_DOC_ID" />
+        </div>
+      </div>
+      <div class="mt-4 flex gap-2">
+        <button id="btnSubmit" class="px-4 py-2 rounded-xl bg-indigo-500 text-white font-semibold">Submit Lineup</button>
+        <div id="slStatus" class="text-sm text-gray-300 self-center"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- App logic -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+    import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-functions.js";
+    import { getFirestore, doc, getDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+    import { firebaseConfig, CURRENT_TID } from './index.html';
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const functions = getFunctions(app, 'us-central1');
+
+    // Tabs
+    const tabLb = document.getElementById('tabLeaderboard');
+    const tabSub = document.getElementById('tabSubmit');
+    const panelLb = document.getElementById('leaderboardPanel');
+    const panelSub = document.getElementById('submitPanel');
+    function setTab(which){
+      const lb = which==='lb';
+      tabLb.classList.toggle('tab-active', lb);
+      tabSub.classList.toggle('tab-active', !lb);
+      panelLb.classList.toggle('hidden', !lb);
+      panelSub.classList.toggle('hidden', lb);
+    }
+    tabLb.onclick = () => setTab('lb');
+    tabSub.onclick = () => setTab('sub');
+
+    // Auth UI with Remember Me
+    const authBox = document.getElementById('authBox');
+    async function applyPersistence(){
+      const remember = localStorage.getItem('if_remember') === '1';
+      await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+    }
+    function renderAuth(user){
+      if (!user){
+        authBox.innerHTML = `
+          <form id="authForm" class="flex gap-2 items-center">
+            <input id="email" type="email" placeholder="email" class="rounded-lg px-3 py-2 bg-white" required />
+            <input id="password" type="password" placeholder="password" class="rounded-lg px-3 py-2 bg-white" required />
+            <label class="text-sm text-gray-300 flex items-center gap-2"><input id="rememberTop" type="checkbox" class="w-4 h-4"/> Remember</label>
+            <button id="loginBtn" class="px-3 py-2 rounded-lg bg-emerald-500 text-white">Login</button>
+            <button id="signupBtn" type="button" class="px-3 py-2 rounded-lg bg-slate-700">Sign up</button>
+          </form>`;
+        const form = document.getElementById('authForm');
+        const email = () => document.getElementById('email').value.trim();
+        const pass  = () => document.getElementById('password').value;
+        form.addEventListener('submit', async (e)=>{
+          e.preventDefault();
+          localStorage.setItem('if_remember', document.getElementById('rememberTop').checked ? '1' : '0');
+          try{ await applyPersistence(); await signInWithEmailAndPassword(auth, email(), pass()); }
+          catch(err){ alert(err.message || err); }
+        });
+        document.getElementById('signupBtn').onclick = async ()=>{
+          localStorage.setItem('if_remember', document.getElementById('rememberTop').checked ? '1' : '0');
+          try{ await applyPersistence(); await createUserWithEmailAndPassword(auth, email(), pass()); }
+          catch(err){ alert(err.message || err); }
+        };
+      } else {
+        authBox.innerHTML = `
+          <span class="text-sm text-gray-300 hidden md:inline">${user.email}</span>
+          <button id="logoutBtn" class="px-3 py-2 rounded-lg bg-red-500 text-white">Logout</button>`;
+        document.getElementById('logoutBtn').onclick = ()=>signOut(auth);
+      }
+    }
+    onAuthStateChanged(auth, renderAuth);
+
+    // Remember me toggle in Submit panel mirrors top setting
+    const rememberCb = document.getElementById('rememberMe');
+    rememberCb.checked = localStorage.getItem('if_remember') === '1';
+    rememberCb.addEventListener('change', ()=>{
+      localStorage.setItem('if_remember', rememberCb.checked ? '1' : '0');
+    });
+
+    // Fetch manager display names from /users/{uid}; fallback to uid
+    async function getNames(uids){
+      const names = new Map();
+      await Promise.all(uids.map(async uid => {
+        try { const s = await getDoc(doc(db, 'users', uid)); if (s.exists()) names.set(uid, (s.data().name||uid)); else names.set(uid, uid); }
+        catch { names.set(uid, uid); }
+      }));
+      return names;
+    }
+
+    // Leaderboard loader (multi-date table)
+    const lbStatus = document.getElementById('lbStatus');
+    const lbRows = document.getElementById('lbRows');
+    const lbHead = document.getElementById('lbHead');
+    const lbDates = document.getElementById('lbDates');
+    const lbSort = document.getElementById('lb_sort');
+
+    document.getElementById('btnLoadLb').onclick = async () => {
+      lbStatus.textContent = 'Loading…'; lbRows.innerHTML = ''; lbHead.innerHTML = ''; lbDates.innerHTML='';
+      try{
+        // Load all leaderboard docs, filter to CURRENT_TID_*
+        const snaps = await getDocs(collection(db, 'leaderboards'));
+        const dayDocs = [];
+        snaps.forEach(d => { if (d.id.startsWith(CURRENT_TID + '_')) dayDocs.push({ id: d.id, data: d.data() }); });
+        if (!dayDocs.length){ lbStatus.textContent = 'No leaderboards yet for TI 2025.'; return; }
+
+        // Extract dateKeys & sort
+        let dateKeys = dayDocs.map(x => x.id.split('_')[1]);
+        dateKeys.sort();
+        const sortMode = lbSort.value;
+        if (sortMode === 'date_desc') dateKeys.reverse();
+
+        // Head
+        lbHead.innerHTML = `<tr><th class=\"py-2 pr-4\">Manager</th>` +
+          dateKeys.map((dk,i)=>`<th class=\"py-2 pr-4\">Day ${i+1}<br><span class=\"text-xs text-gray-400\">${dk}</span></th>`).join('') +
+          `<th class=\"py-2 pr-4\">Total</th></tr>`;
+
+        // Map manager → per-day
+        const managerSet = new Set();
+        const pointsByManager = new Map(); // uid -> { by: Map, total }
+        for (const {id, data} of dayDocs){
+          const dk = id.split('_')[1];
+          const entries = (data.entries||[]) ;
+          entries.forEach(e => {
+            managerSet.add(e.mid);
+            if (!pointsByManager.has(e.mid)) pointsByManager.set(e.mid, { by: new Map(), total: 0 });
+            pointsByManager.get(e.mid).by.set(dk, Number(e.totalPoints||0));
+            pointsByManager.get(e.mid).total += Number(e.totalPoints||0);
+          });
+        }
+
+        // Names
+        const uids = Array.from(managerSet);
+        const nameMap = await getNames(uids);
+
+        // Rows
+        let rows = uids.map(uid => {
+          const rec = pointsByManager.get(uid) || { by: new Map(), total: 0 };
+          const cells = dateKeys.map(dk => (rec.by.get(dk)||0));
+          return { uid, name: nameMap.get(uid)||uid, cells, total: rec.total };
+        });
+
+        // Sort by totals if requested
+        if (sortMode.startsWith('total_')){
+          rows.sort((a,b)=> sortMode==='total_desc' ? b.total - a.total : a.total - b.total);
+        }
+
+        // Date chips
+        dateKeys.forEach((dk,i)=>{
+          const chip = document.createElement('span');
+          chip.className = 'px-3 py-1 rounded-full bg-slate-700/60 border border-slate-600/60 text-xs';
+          chip.textContent = `Day ${i+1} – ${dk}`;
+          lbDates.appendChild(chip);
+        });
+
+        // Render table
+        lbRows.innerHTML = '';
+        rows.forEach(r => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td class=\"py-2 pr-4\">${r.name}</td>` +
+            r.cells.map(v=>`<td class=\"py-2 pr-4\">${v.toFixed(2)}</td>`).join('') +
+            `<td class=\"py-2 pr-4 font-semibold\">${r.total.toFixed(2)}</td>`;
+          lbRows.appendChild(tr);
+        });
+        lbStatus.textContent = `${rows.length} managers, ${dateKeys.length} days`;
+      }catch(err){ lbStatus.textContent = 'Error: '+(err.message||err); }
+    };
+
+    // Submit Lineup (tid fixed to CURRENT_TID)
+    document.getElementById('btnSubmit').onclick = async () => {
+      const user = auth.currentUser;
+      const out = document.getElementById('slStatus');
+      if (!user){ out.textContent = 'Please login first.'; return; }
+      const tid = CURRENT_TID;
+      const dateKey = document.getElementById('sl_dateKey').value.trim();
+      const captain = Number(document.getElementById('sl_captain').value);
+      const cores = (document.getElementById('sl_cores').value||'').split(',').map(s=>Number(s.trim())).filter(Boolean);
+      const supports = (document.getElementById('sl_supports').value||'').split(',').map(s=>Number(s.trim())).filter(Boolean);
+      const teamCard = document.getElementById('sl_teamCard').value.trim();
+      out.textContent = 'Submitting…';
+      try{
+        const call = httpsCallable(functions, 'submitLineup');
+        const { data } = await call({ tid, dateKey, captain, cores, supports, teamCard });
+        out.textContent = `Submitted. ${data.locked ? 'Locked for today.' : 'Editable until lock.'}`;
+      }catch(err){ out.textContent = 'Error: '+(err.message||err); }
+    };
+  </script>
+</body>
+</html>
