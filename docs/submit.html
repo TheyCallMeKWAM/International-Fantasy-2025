@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>International Fantasy — Submit Lineup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --bg:url('./international_2025_ls_3_4k.jpg'); }
+    body{
+      min-height:100vh; color:#e6e8eb; position:relative; overflow-x:hidden; background:#0b0d0f;
+    }
+    body::before{
+      content:""; position:fixed; inset:0; background-image:var(--bg);
+      background-size:cover; background-position:center; background-attachment:fixed;
+      filter:brightness(.85) saturate(1.1); z-index:-2;
+    }
+    body::after{
+      content:""; position:fixed; inset:0;
+      background:radial-gradient(80% 60% at 50% -10%, rgba(26,34,48,.6), rgba(11,13,15,.85) 60%); z-index:-1;
+    }
+    .card{ background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.2); border-radius:16px; backdrop-filter:blur(12px); box-shadow:0 18px 50px rgba(0,0,0,.45); }
+    .chip{ background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2); }
+    select, select option, select optgroup { color:#111827 !important; background:#ffffff !important; }
+    select:focus{ outline:2px solid #6366f1; box-shadow: 0 0 0 4px rgba(99,102,241,.20); }
+    .error-border{ outline:2px solid rgba(239,68,68,.9); }
+    label.hlbl{ display:block; font-weight:600; margin-bottom:.5rem; }
+  </style>
+</head>
+<body>
+  <header class="max-w-6xl mx-auto px-4 py-8 flex items-center justify-between">
+    <div>
+      <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight">INTERNATIONAL FANTASY</h1>
+      <p class="text-sm text-gray-300">Submit your lineup for the next lock.</p>
+    </div>
+    <div id="authBox" class="flex gap-3 items-center"></div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 pb-24">
+    <div class="flex gap-3 items-center mb-6">
+      <a href="index.html" class="px-4 py-2 rounded-xl bg-slate-700/70 hover:bg-slate-700 text-white shadow">← Leaderboard</a>
+      <span class="ml-auto px-3 py-1 rounded-full chip text-sm">TI 2025</span>
+    </div>
+
+    <section class="card p-4 md:p-6">
+      <div class="flex flex-col md:flex-row md:items-center gap-4 mb-4">
+        <p class="text-sm text-gray-300">Lineups use the current day automatically. Locks follow Group Stage & Playoffs schedule.</p>
+        <div class="ml-auto flex items-center gap-3 text-sm">
+          <span class="text-gray-300">Locks in:</span>
+          <span id="lockCountdown" class="px-2 py-1 rounded bg-black/30 border border-white/10">--:--:--</span>
+        </div>
+      </div>
+
+      <div class="mb-3 text-sm text-gray-300">
+        <span id="dayLabel" class="font-semibold"></span>
+        <span id="dateLabel"></span>
+      </div>
+
+      <div id="playersEmpty" class="hidden text-sm text-amber-300 mb-4">No players or teams found.</div>
+      <div id="playersLoading" class="text-sm text-gray-300 mb-4">Loading players…</div>
+
+      <div class="grid grid-cols-1 gap-6">
+        <div>
+          <label class="hlbl">Captain</label>
+          <select id="dd_captain" class="w-full rounded-lg px-3 py-2 shadow"></select>
+        </div>
+
+        <div>
+          <label class="hlbl">Cores</label>
+          <div class="grid md:grid-cols-3 gap-3">
+            <select id="dd_core1" class="w-full rounded-lg px-3 py-2 shadow"></select>
+            <select id="dd_core2" class="w-full rounded-lg px-3 py-2 shadow"></select>
+            <select id="dd_core3" class="w-full rounded-lg px-3 py-2 shadow"></select>
+          </div>
+        </div>
+
+        <div>
+          <label class="hlbl">Supports</label>
+          <div class="grid md:grid-cols-2 gap-3">
+            <select id="dd_sup1" class="w-full rounded-lg px-3 py-2 shadow"></select>
+            <select id="dd_sup2" class="w-full rounded-lg px-3 py-2 shadow"></select>
+          </div>
+        </div>
+
+        <div>
+          <label class="hlbl">Team</label>
+          <select id="dd_team" class="w-full rounded-lg px-3 py-2 shadow"></select>
+          <p class="text-xs text-gray-300 mt-2">Max 4 selections from a single team (players + team).</p>
+        </div>
+
+        <div id="dupeWarning" class="hidden text-amber-300 text-sm">Duplicate players detected.</div>
+        <div id="errorWarning" class="hidden text-red-400 text-sm"></div>
+
+        <div class="flex gap-2 items-center">
+          <button id="btnSubmit" class="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-semibold shadow">Submit Lineup</button>
+          <div id="slStatus" class="text-sm text-gray-300"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+    import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-functions.js";
+    import { getFirestore, getDocs, getDoc, collection, query, where, doc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+    import { setupAuthUI } from "./assets/auth-ui.js";
+
+    const app = initializeApp({
+      apiKey:"AIzaSyAx8jWSAZdR_rzgVP8XumxNOvsy86bjl-Q",
+      authDomain:"internationalfantasy2025.firebaseapp.com",
+      projectId:"internationalfantasy2025",
+      storageBucket:"internationalfantasy2025.firebasestorage.app",
+      messagingSenderId:"864977028555",
+      appId:"1:864977028555:web:8038b630cba08cc661624e"
+    });
+
+    const { auth, db } = setupAuthUI({ app, headerEl: document.getElementById('authBox'), cardClass: 'card' });
+    const functions = getFunctions(app, 'us-central1');
+    const CURRENT_TID = "ti2025";
+
+    const lockEl = document.getElementById('lockCountdown');
+    const dayLabel = document.getElementById('dayLabel');
+    const dateLabel = document.getElementById('dateLabel');
+
+    function nextLock(){
+      const scheduleDays = [4,5,6,7,11,12,13,14]; // Sept 2025
+      const now = new Date();
+      const nowET = new Date(now.getTime() - 4*3600*1000);
+      const daysET = scheduleDays.map(d => new Date(Date.UTC(2025,8,d,0,0,0)));
+      let idx = daysET.findIndex(d => nowET <= d);
+      if (idx === -1) idx = daysET.length - 1;
+      const todayET = daysET[idx];
+      const noonET = new Date(Date.UTC(todayET.getUTCFullYear(), todayET.getUTCMonth(), todayET.getUTCDate(), 16, 0, 0));
+      const sameDay = nowET.getUTCFullYear()===todayET.getUTCFullYear() && nowET.getUTCMonth()===todayET.getUTCMonth() && nowET.getUTCDate()===todayET.getUTCDate();
+      if (sameDay && now.getTime() >= noonET.getTime() && idx < daysET.length - 1) idx++;
+      const targetDay = scheduleDays[idx];
+      return new Date(Date.UTC(2025,8,targetDay,11,0,0)); // 07:00 ET
+    }
+    function yyyymmdd(d){ return `${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,'0')}${String(d.getUTCDate()).padStart(2,'0')}`; }
+    function labelFor(d){ const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${days[d.getUTCDay()]} ${months[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2,'0')} @ 07:00 ET`; }
+    function tick(){ const t=nextLock(), now=new Date(); const diff=t-now; if(diff<=0){ lockEl.textContent='LOCKED'; return;} const h=String(Math.floor(diff/3600000)).padStart(2,'0'); const m=String(Math.floor((diff%3600000)/60000)).padStart(2,'0'); const s=String(Math.floor((diff%60000)/1000)).padStart(2,'0'); lockEl.textContent=`${h}:${m}:${s}`; dayLabel.textContent='Next lock:'; dateLabel.textContent=' '+labelFor(t);} setInterval(tick,1000); tick();
+
+    const selects = {
+      captain: document.getElementById('dd_captain'),
+      core1: document.getElementById('dd_core1'),
+      core2: document.getElementById('dd_core2'),
+      core3: document.getElementById('dd_core3'),
+      sup1: document.getElementById('dd_sup1'),
+      sup2: document.getElementById('dd_sup2'),
+      team: document.getElementById('dd_team')
+    };
+    const playerTeamNameBySteam32 = new Map();
+    const teamsById = new Map();
+
+    function populateGroupedSelect(sel, grouped, filterFn){
+      sel.innerHTML=''; sel.appendChild(new Option('— Select —',''));
+      Array.from(grouped.keys()).sort().forEach(team=>{
+        const players = grouped.get(team).filter(p=>!filterFn || filterFn(p))
+          .sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+        if (!players.length) return;
+        const og = document.createElement('optgroup'); og.label = team;
+        players.forEach(p=>{ const o=document.createElement('option'); o.value=String(p.steam32); o.textContent=p.name; og.appendChild(o); });
+        sel.appendChild(og);
+      });
+    }
+
+    async function loadPlayersAndTeams(){
+      try{
+        const tSnap = await getDocs(query(collection(db,'teams'), where('tid','==',CURRENT_TID), where('eligible','==',true)));
+        selects.team.innerHTML=''; selects.team.appendChild(new Option('— Select team —',''));
+        tSnap.forEach(d=>{ const t=d.data(); const id=String(t.orgId||d.id); const name=t.name||t.orgName||d.id; teamsById.set(id,{name}); const o=document.createElement('option'); o.value=id; o.textContent=name; selects.team.appendChild(o); });
+
+        const pSnap = await getDocs(query(collection(db,'players'), where('tid','==',CURRENT_TID), where('eligible','==',true)));
+        const grouped = new Map();
+        pSnap.forEach(d=>{
+          const p = d.data();
+          const team = p.orgName || p.teamName || 'Unknown Team';
+          if(!grouped.has(team)) grouped.set(team,[]);
+          grouped.get(team).push(p);
+          if (p.steam32) playerTeamNameBySteam32.set(String(p.steam32), team);
+        });
+        const isCore = p => ['core','carry','mid','offlane','position1','position2','position3'].includes((p.role||'').toLowerCase());
+        const isSup  = p => ['support','position4','position5','soft','hard'].includes((p.role||'').toLowerCase());
+        populateGroupedSelect(selects.captain, grouped, null);
+        populateGroupedSelect(selects.core1, grouped, isCore);
+        populateGroupedSelect(selects.core2, grouped, isCore);
+        populateGroupedSelect(selects.core3, grouped, isCore);
+        populateGroupedSelect(selects.sup1, grouped, isSup);
+        populateGroupedSelect(selects.sup2, grouped, isSup);
+
+        document.getElementById('playersLoading').classList.add('hidden');
+      }catch{ document.getElementById('playersEmpty').classList.remove('hidden'); }
+    }
+    await loadPlayersAndTeams();
+
+    async function prefillSavedLineup(){
+      try{
+        const user = auth.currentUser; if (!user) return;
+        const dateKey = yyyymmdd(nextLock());
+        const snap = await getDoc(doc(db,'lineups', `${CURRENT_TID}_${dateKey}_${user.uid}`));
+        if (!snap.exists()) return;
+        const L = snap.data();
+        if(L.captain) selects.captain.value=String(L.captain);
+        (L.cores||[]).forEach((v,i)=>{ const k=['core1','core2','core3'][i]; if(selects[k]) selects[k].value=String(v); });
+        (L.supports||[]).forEach((v,i)=>{ const k=['sup1','sup2'][i]; if(selects[k]) selects[k].value=String(v); });
+        if(L.teamCard) selects.team.value=String(L.teamCard);
+      }catch{}
+    }
+    onAuthStateChanged(auth, ()=> prefillSavedLineup());
+
+    const errorWarning = document.getElementById('errorWarning');
+    const dupeWarning = document.getElementById('dupeWarning');
+
+    function validateOnSubmit(){
+      errorWarning.classList.add('hidden'); dupeWarning.classList.add('hidden');
+      Object.values(selects).forEach(s=> s.classList.remove('error-border'));
+
+      const missing = [];
+      if (!selects.captain.value) missing.push(selects.captain);
+      if (!selects.core1.value) missing.push(selects.core1);
+      if (!selects.core2.value) missing.push(selects.core2);
+      if (!selects.core3.value) missing.push(selects.core3);
+      if (!selects.sup1.value)  missing.push(selects.sup1);
+      if (!selects.sup2.value)  missing.push(selects.sup2);
+      if (!selects.team.value)  missing.push(selects.team);
+      if (missing.length){ missing.forEach(s=> s.classList.add('error-border')); errorWarning.textContent='Please fill all slots, including Team.'; errorWarning.classList.remove('hidden'); return false; }
+
+      const ids = [selects.captain.value, selects.core1.value, selects.core2.value, selects.core3.value, selects.sup1.value, selects.sup2.value];
+      const uniq = new Set(ids);
+      if (uniq.size !== ids.length){ dupeWarning.classList.remove('hidden'); return false; }
+
+      const counts = {};
+      ids.forEach(id=>{ const team=playerTeamNameBySteam32.get(String(id)); if(team){ counts[team]=(counts[team]||0)+1; } });
+      const teamChoiceName = teamsById.get(String(selects.team.value))?.name || 'Team';
+      counts[teamChoiceName]=(counts[teamChoiceName]||0)+1;
+      for (const [team,c] of Object.entries(counts)) if (c>4){ errorWarning.textContent=`Max 4 per team (including team card). ${team} has ${c}.`; errorWarning.classList.remove('hidden'); return false; }
+      return true;
+    }
+
+    document.getElementById('btnSubmit').onclick = async () => {
+      const user = auth.currentUser; const out = document.getElementById('slStatus');
+      if (!user){ out.textContent='Please sign in first.'; return; }
+      if (!validateOnSubmit()) return;
+
+      out.textContent = 'Submitting…';
+      try{
+        const dateKey = yyyymmdd(nextLock());
+        const payload = {
+          tid: CURRENT_TID,
+          dateKey,
+          captain: selects.captain.value,
+          cores: [selects.core1.value, selects.core2.value, selects.core3.value],
+          supports: [selects.sup1.value, selects.sup2.value],
+          teamCard: selects.team.value
+        };
+        const call = httpsCallable(functions, 'submitLineup');
+        const { data } = await call(payload);
+        out.textContent = data?.ok ? 'Saved!' : 'Saved.';
+      }catch(err){
+        out.textContent = 'Error: ' + (err.message || err);
+      }
+    };
+  </script>
+</body>
+</html>

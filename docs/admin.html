@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>IF Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --bg-url: url("./international_2025_ls_3_4k.jpg"); }
+    body{
+      min-height:100vh;
+      color:#e6e8eb;
+      background:
+        linear-gradient(180deg, rgba(14,16,20,.78), rgba(14,16,20,.78)),
+        var(--bg-url) center/cover fixed no-repeat;
+    }
+    .card{
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 16px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 18px 50px rgba(0,0,0,.45);
+    }
+    input, select, textarea { color:#111827 !important; background:#ffffff !important; }
+    input::placeholder, textarea::placeholder { color:#6b7280; }
+  </style>
+</head>
+<body>
+  <header class="max-w-6xl mx-auto px-4 pt-10 pb-6 flex items-center justify-between">
+    <h1 class="text-3xl font-bold drop-shadow">International Fantasy — Admin</h1>
+    <div id="who" class="text-sm text-gray-200"></div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 pb-24">
+    <div id="notAdmin" class="card p-4 mb-6 hidden">
+      <div class="text-rose-300 font-medium">This account is not an admin.</div>
+      <div class="text-sm text-gray-300 mt-1">Ask an admin to grant the <code>admin: true</code> custom claim.</div>
+    </div>
+
+    <section id="adminToolbar" class="card p-4 mb-6 hidden">
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div class="flex items-end gap-2">
+          <div class="grow">
+            <label class="block text-xs text-gray-300 mb-1">Day (YYYYMMDD)</label>
+            <input id="dayKey" class="w-full px-3 py-2 rounded-lg" placeholder="20250904">
+          </div>
+          <button id="btnRescore" class="px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white font-semibold">Force Rescore</button>
+          <button id="btnExport" class="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">Download JSON</button>
+        </div>
+        <div class="text-sm text-gray-300">Use the day key to rescore or export the raw stats + picks snapshot for that date.</div>
+      </div>
+      <div id="adminToolbarStatus" class="text-sm text-gray-300 mt-2"></div>
+    </section>
+
+    <div id="adminPanels" class="grid grid-cols-1 lg:grid-cols-2 gap-6 hidden">
+      <section class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="font-semibold">Players — Eligibility</div>
+          <div class="text-xs text-gray-300">ti2025</div>
+        </div>
+
+        <div class="mb-3 flex items-center gap-2">
+          <input id="playerSearch" class="px-3 py-2 rounded-lg w-full" placeholder="Search player or team…"/>
+          <button id="refreshPlayers" class="px-3 py-2 rounded-lg bg-slate-700 text-white">Refresh</button>
+        </div>
+
+        <div id="playersStatus" class="text-sm text-gray-300 mb-3">Loading…</div>
+        <div id="playersWrap" class="space-y-4 max-h-[70vh] overflow-y-auto pr-2"></div>
+      </section>
+
+      <section class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="font-semibold">Teams — Eligibility</div>
+          <div class="text-xs text-gray-300">ti2025</div>
+        </div>
+
+        <div class="mb-3 flex items-center gap-2">
+          <input id="teamSearch" class="px-3 py-2 rounded-lg w-full" placeholder="Search team…"/>
+          <button id="refreshTeams" class="px-3 py-2 rounded-lg bg-slate-700 text-white">Refresh</button>
+        </div>
+
+        <div id="teamsStatus" class="text-sm text-gray-300 mb-3">Loading…</div>
+
+        <div class="overflow-x-auto max-h-[70vh] overflow-y-auto pr-2">
+          <table class="min-w-full text-sm">
+            <thead class="text-left text-gray-300 sticky top-0 bg-slate-900/70 backdrop-blur">
+              <tr>
+                <th class="py-2 pr-4">Team</th>
+                <th class="py-2 pr-4">Org ID</th>
+                <th class="py-2 pr-4">Eligible</th>
+              </tr>
+            </thead>
+            <tbody id="teamsTbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+    import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-functions.js";
+    import { getFirestore, collection, query, where, getDocs, updateDoc, doc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+    import { setupAuthUI } from "./assets/auth-ui.js";
+
+    const app = initializeApp({
+      apiKey: "AIzaSyAx8jWSAZdR_rzgVP8XumxNOvsy86bjl-Q",
+      authDomain: "internationalfantasy2025.firebaseapp.com",
+      projectId: "internationalfantasy2025",
+      storageBucket: "internationalfantasy2025.firebasestorage.app",
+      messagingSenderId: "864977028555",
+      appId: "1:864977028555:web:8038b630cba08cc661624e"
+    });
+
+    const { auth, db } = setupAuthUI({ app, headerEl: document.getElementById('who'), cardClass: 'card' });
+    const functions = getFunctions(app, 'us-central1');
+    const CURRENT_TID = "ti2025";
+
+    const adminToolbar = document.getElementById('adminToolbar');
+    const toolbarStatus = document.getElementById('adminToolbarStatus');
+    const panels = document.getElementById('adminPanels');
+    const notAdmin = document.getElementById('notAdmin');
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        notAdmin.classList.remove('hidden');
+        panels.classList.add('hidden');
+        adminToolbar.classList.add('hidden');
+        return;
+      }
+      const tok = await user.getIdTokenResult(true);
+      const isAdmin = !!tok.claims?.admin;
+      notAdmin.classList.toggle('hidden', isAdmin);
+      panels.classList.toggle('hidden', !isAdmin);
+      adminToolbar.classList.toggle('hidden', !isAdmin);
+      if (isAdmin) { loadPlayers(); loadTeams(); }
+    });
+
+    const dayKey = document.getElementById('dayKey');
+    document.getElementById('btnRescore').onclick = async () => {
+      const dk = (dayKey.value || '').trim();
+      if (!/^\d{8}$/.test(dk)) { toolbarStatus.textContent = 'Enter a date like 20250904'; return; }
+      toolbarStatus.textContent = 'Rescoring…';
+      try{
+        const call = httpsCallable(functions, 'adminRescoreDay');
+        const { data } = await call({ tid: CURRENT_TID, dateKey: dk });
+        toolbarStatus.textContent = `OK — rescored ${data?.count ?? 0} lineups.`;
+      }catch(err){ toolbarStatus.textContent = 'Error: ' + (err.message || err); }
+    };
+
+    document.getElementById('btnExport').onclick = async () => {
+      const dk = (dayKey.value || '').trim();
+      if (!/^\d{8}$/.test(dk)) { toolbarStatus.textContent = 'Enter a date like 20250904'; return; }
+      toolbarStatus.textContent = 'Exporting…';
+      try{
+        const call = httpsCallable(functions, 'adminExportScores');
+        const { data } = await call({ tid: CURRENT_TID, dateKey: dk });
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `if_${CURRENT_TID}_${dk}_export.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        toolbarStatus.textContent = 'Download started.';
+      }catch(err){ toolbarStatus.textContent = 'Error: ' + (err.message || err); }
+    };
+
+    const playersStatus = document.getElementById('playersStatus');
+    const playersWrap = document.getElementById('playersWrap');
+    const playerSearch = document.getElementById('playerSearch');
+    document.getElementById('refreshPlayers').onclick = () => loadPlayers();
+
+    let cachedPlayers = [];
+    function renderPlayers(filter=''){
+      const term = filter.trim().toLowerCase();
+      playersWrap.innerHTML = '';
+      if (!cachedPlayers.length) { playersStatus.textContent='No players found.'; return; }
+
+      const byTeam = new Map();
+      cachedPlayers.forEach(p => {
+        if (term && !`${p.name} ${p.orgName} ${p.role}`.toLowerCase().includes(term)) return;
+        const key = p.orgName || 'Unknown';
+        if (!byTeam.has(key)) byTeam.set(key, []);
+        byTeam.get(key).push(p);
+      });
+
+      const teams = Array.from(byTeam.keys()).sort((a,b)=> a.localeCompare(b));
+      playersStatus.textContent = `${teams.length} teams`;
+
+      teams.forEach(team => {
+        const list = byTeam.get(team).sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')));
+        const box = document.createElement('div');
+        box.className = 'border border-white/10 rounded-xl overflow-hidden';
+        box.innerHTML = `
+          <div class="flex items-center justify-between px-3 py-2 bg-white/10">
+            <div class="font-semibold">${team}</div>
+            <div class="text-xs text-gray-300">${list.length} players</div>
+          </div>
+          <div class="divide-y divide-white/10"></div>
+        `;
+        const inner = box.lastElementChild;
+        list.forEach(p => {
+          const row = document.createElement('div');
+          row.className = 'flex items-center justify-between px-3 py-2';
+          row.innerHTML = `
+            <div class="truncate">
+              <div class="font-medium">${p.name || p.steam32}</div>
+              <div class="text-xs text-gray-300">${p.role || '—'} <span class="mx-1">·</span> <span class="text-gray-400">${p.steam32}</span></div>
+            </div>
+            <label class="inline-flex items-center gap-2 text-sm">
+              <input type="checkbox" ${p.eligible ? 'checked':''} data-doc="${p.id}" class="w-4 h-4">
+              <span>Eligible</span>
+            </label>
+          `;
+          inner.appendChild(row);
+          row.querySelector('input').addEventListener('change', async (e) => {
+            try{ await updateDoc(doc(db,'players', e.target.dataset.doc), { eligible: e.target.checked }); }
+            catch(err){ alert('Update failed: '+(err.message||err)); e.target.checked = !e.target.checked; }
+          });
+        });
+        playersWrap.appendChild(box);
+      });
+    }
+
+    async function loadPlayers(){
+      playersStatus.textContent = 'Loading…'; playersWrap.innerHTML = '';
+      try{
+        const snap = await getDocs(query(collection(db,'players'), where('tid','==',CURRENT_TID)));
+        cachedPlayers = [];
+        snap.forEach(d=>{
+          const p = d.data();
+          cachedPlayers.push({
+            id: d.id,
+            name: p.name,
+            role: p.role,
+            steam32: p.steam32,
+            orgName: p.orgName || p.teamName || 'Unknown',
+            eligible: !!p.eligible
+          });
+        });
+        renderPlayers(playerSearch.value);
+      }catch(err){ playersStatus.textContent = 'Error: '+(err.message||err); }
+    }
+    playerSearch.addEventListener('input', () => renderPlayers(playerSearch.value));
+
+    const teamsStatus = document.getElementById('teamsStatus');
+    const teamsTbody = document.getElementById('teamsTbody');
+    const teamSearch = document.getElementById('teamSearch');
+    document.getElementById('refreshTeams').onclick = () => loadTeams();
+
+    let cachedTeams = [];
+    function renderTeams(filter=''){
+      const term = filter.trim().toLowerCase();
+      teamsTbody.innerHTML = '';
+      if (!cachedTeams.length){ teamsStatus.textContent = 'No teams found.'; return; }
+
+      const rows = cachedTeams
+        .filter(t => !term || `${t.name} ${t.orgId}`.toLowerCase().includes(term))
+        .sort((a,b)=> a.name.localeCompare(b.name));
+
+      teamsStatus.textContent = `${rows.length} teams`;
+
+      rows.forEach(t=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="py-2 pr-4">${t.name}</td>
+          <td class="py-2 pr-4 text-gray-300">${t.orgId}</td>
+          <td class="py-2 pr-4">
+            <input type="checkbox" ${t.eligible ? 'checked':''} data-doc="${t.id}" class="w-4 h-4">
+          </td>
+        `;
+        tr.querySelector('input').addEventListener('change', async (e)=>{
+          try{ await updateDoc(doc(db,'teams', e.target.dataset.doc), { eligible: e.target.checked }); }
+          catch(err){ alert('Update failed: '+(err.message||err)); e.target.checked = !e.target.checked; }
+        });
+        teamsTbody.appendChild(tr);
+      });
+    }
+
+    async function loadTeams(){
+      teamsStatus.textContent = 'Loading…'; teamsTbody.innerHTML = '';
+      try{
+        const snap = await getDocs(query(collection(db,'teams'), where('tid','==',CURRENT_TID)));
+        cachedTeams = [];
+        snap.forEach(d=>{
+          const t = d.data();
+          cachedTeams.push({
+            id: d.id,
+            name: t.name || t.orgName || d.id,
+            orgId: String(t.orgId || d.id),
+            eligible: !!t.eligible
+          });
+        });
+        renderTeams(teamSearch.value);
+      }catch(err){ teamsStatus.textContent = 'Error: '+(err.message||err); }
+    }
+    teamSearch.addEventListener('input', () => renderTeams(teamSearch.value));
+  </script>
+</body>
+</html>

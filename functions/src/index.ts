@@ -1,38 +1,64 @@
-// functions/src/index.ts (add alongside your existing exports)
-import { onCall } from "firebase-functions/v2/https";
-import { db } from "./firebaseAdmin.js";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import * as admin from "firebase-admin";
 
-export const submitLineup = onCall(async (req) => {
-  const uid = req.auth?.uid;
-  if (!uid) throw new Error("auth required");
+if (!admin.apps.length) admin.initializeApp();
+const db = admin.firestore();
 
-  const { tid, dateKey, captain, cores, supports, teamCard } = (req.data ?? {});
-  if (!tid || !dateKey) throw new Error("tid & dateKey required");
+const ACTIVE_DAYS_ET = [4,5,6,7,11,12,13,14]; // Sep 2025 (group + playoffs)
 
-  // fetch tournament config
-  const tSnap = await db.doc(`tournaments/${tid}`).get();
-  if (!tSnap.exists) throw new Error("tournament not found");
-  const cfg = tSnap.data() as any;
-  const roles = cfg.roles ?? { cores: 3, supports: 2, maxFromOneOrg: 4 };
+// 07:00 ET lock (11:00 UTC in September).
+function computeLockUTC(dateKey: string): Date {
+  const y = Number(dateKey.slice(0, 4));
+  const m = Number(dateKey.slice(4, 6)) - 1;
+  const d = Number(dateKey.slice(6, 8));
+  return new Date(Date.UTC(y, m, d, 11, 0, 0));
+}
 
-  // shape checks
-  if (!Number.isInteger(captain)) throw new Error("captain steam32 required");
-  if (!Array.isArray(cores) || cores.length !== roles.cores) throw new Error(`need ${roles.cores} cores`);
-  if (!Array.isArray(supports) || supports.length !== roles.supports) throw new Error(`need ${roles.supports} supports`);
-  if (typeof teamCard !== "string") throw new Error("teamCard orgId required");
+function todayDateKeyET(now = new Date()): string {
+  // Convert "now" to ET (UTC-4 in September).
+  const et = new Date(now.getTime() - 4 * 3600 * 1000);
+  const y = et.getUTCFullYear();
+  const m = String(et.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(et.getUTCDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
 
-  // OPTIONAL: enforce maxFromOneOrg if you store an org map per player (skip if you don’t have it yet)
+function isActiveDay(dateKey: string): boolean {
+  const y = Number(dateKey.slice(0,4));
+  const m = Number(dateKey.slice(4,6));
+  const d = Number(dateKey.slice(6,8));
+  return y === 2025 && m === 9 && ACTIVE_DAYS_ET.includes(d);
+}
 
-  // respect lock: if current UTC hour >= lockHourUTC, block
-  const now = new Date();
-  const locked = now.getUTCHours() >= (cfg.lockHourUTC ?? 12);
+/**
+ * Locks lineups once the hour crosses the daily lock.
+ * Runs hourly; safe to re-run (idempotent).
+ */
+export const lockLineupsHourly = onSchedule("0 * * * *", async () => {
+  const dk = todayDateKeyET();
+  if (!isActiveDay(dk)) return;
 
-  const docId = `${tid}_${uid}_${dateKey}`;
-  await db.doc(`lineups/${docId}`).set({
-    tid, dateKey, mid: uid,
-    captain, cores, supports, teamCard,
-    locked
+  const lockAt = computeLockUTC(dk).getTime();
+  const now = Date.now();
+  if (now < lockAt) return; // not time yet
+
+  // Mark all docs for this tid/day as locked (merge, idempotent).
+  const tid = "ti2025";
+  const q = db.collection("lineups")
+    .where("tid", "==", tid)
+    .where("dateKey", "==", dk)
+    .where("locked", "==", false);
+
+  const snap = await q.get();
+  const batch = db.batch();
+  snap.forEach(s => batch.set(s.ref, {
+    locked: true,
+    lockedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true }));
+  if (!snap.empty) await batch.commit();
+
+  // Optional: write a small marker document for visibility / debugging.
+  await db.collection("locks").doc(`${tid}_${dk}`).set({
+    tid, dateKey: dk, lockedAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
-
-  return { ok: true, locked };
 });

@@ -1,0 +1,22 @@
+{
+  "players": {
+    "kill": 3,
+    "assist": 2,
+    "death": -1,
+    "lastHits": 0.02,
+    "denies": 0.02,
+    "wardsPlaced": 0.2,
+    "campsStacked": 0.5,
+    "winUnder25": 15,
+    "kaOver20": 2,
+    "winGame": 15
+  },
+  "team": {
+    "towers": 1,
+    "barracks": 1,
+    "roshans": 3,
+    "firstBlood": 2,
+    "teamWin": 2,
+    "sweepBonus": 15
+  }
+}
