@@ -1,12 +1,13 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <!-- source: :contentReference[oaicite:0]{index=0} -->
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>International Fantasy — Submit Lineup</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root { --bg:url('../international_2025_ls_3_4k.jpg'); }
+    :root { --bg:url('international_2025_ls_3_4k.jpg'); }
     body{
       min-height:100vh; color:#e6e8eb; position:relative; overflow-x:hidden; background:#0b0d0f;
     }
@@ -44,7 +45,7 @@
 
     <section class="card p-4 md:p-6">
       <div class="flex flex-col md:flex-row md:items-center gap-4 mb-4">
-        <p class="text-sm text-gray-300">Lineups use the current day automatically. Locks follow Group Stage & Playoffs schedule.</p>
+        <p class="text-sm text-gray-300">Lineups use the next daily lock. Locks are <b>3:00 AM ET</b>. New day opens <b>4:00 AM ET</b>.</p>
         <div class="ml-auto flex items-center gap-3 text-sm">
           <span class="text-gray-300">Locks in:</span>
           <span id="lockCountdown" class="px-2 py-1 rounded bg-black/30 border border-white/10">--:--:--</span>
@@ -54,6 +55,7 @@
       <div class="mb-3 text-sm text-gray-300">
         <span id="dayLabel" class="font-semibold"></span>
         <span id="dateLabel"></span>
+        <span id="openStatus" class="ml-2 text-amber-300"></span>
       </div>
 
       <div id="playersEmpty" class="hidden text-sm text-amber-300 mb-4">No players or teams found.</div>
@@ -119,6 +121,96 @@
     const functions = getFunctions(app, 'us-central1');
     const CURRENT_TID = "ti2025";
 
+    // ------- ET helpers (America/New_York) -------
+    const TZ = 'America/New_York';
+
+    function etParts(d = new Date()){
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: TZ, hour12: false,
+        year:'numeric', month:'2-digit', day:'2-digit',
+        hour:'2-digit', minute:'2-digit', second:'2-digit',
+        timeZoneName: 'shortOffset'
+      }).formatToParts(d).reduce((acc,p)=>{ acc[p.type]=p.value; return acc; }, {});
+      const [y,m,day,h,mi,s] = [parts.year,parts.month,parts.day,parts.hour,parts.minute,parts.second].map(v=>parseInt(v,10));
+      // Convert like "GMT-4" -> "-04:00"
+      const offRaw = String(parts.timeZoneName||'GMT-4');
+      const mOff = offRaw.match(/([+-]\d{1,2})(?::?(\d{2}))?$/);
+      const hh = String(Math.abs(parseInt(mOff?.[1]||'-4',10))).padStart(2,'0');
+      const sign = (mOff?.[1]||'-4').startsWith('-') ? '-' : '+';
+      const mm = mOff?.[2] ? mOff[2] : '00';
+      const offset = `${sign}${hh}:${mm}`;
+      return { y,m,day,h,mi,s, offset };
+    }
+
+    function etDateToJS(y,m,day,h=0,mi=0,s=0, offset='+00:00'){
+      // Create a real JS Date using explicit offset
+      const iso = `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}T${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(s).padStart(2,'0')}${offset}`;
+      return new Date(iso);
+    }
+
+    function nextLockET(){
+      const {y,m,day,h,mi,s,offset} = etParts();
+      const lockToday = etDateToJS(y,m,day,3,0,0, offset);  // 3:00 AM ET
+      const now = new Date();
+      if (now < lockToday) return lockToday;
+      // otherwise tomorrow 3:00 AM ET (re-fetch offset for tomorrow in case DST flips)
+      const tomorrow = new Date(etDateToJS(y,m,day,12,0,0, offset).getTime() + 24*3600*1000);
+      const p = etParts(tomorrow);
+      return etDateToJS(p.y,p.m,p.day,3,0,0,p.offset);
+    }
+
+    function previousLockET(){
+      const next = nextLockET();
+      // subtract 24h from next lock to get previous 3am ET
+      const prevCandidate = new Date(next.getTime() - 24*3600*1000);
+      const p = etParts(prevCandidate);
+      return etDateToJS(p.y,p.m,p.day,3,0,0,p.offset);
+    }
+
+    function editorOpenNow(){
+      // Editor opens at 4:00 AM ET after the most recent 3:00 AM lock.
+      const prevLock = previousLockET();
+      const openAt = new Date(prevLock.getTime() + 1*3600*1000); // +1 hour
+      return new Date() >= openAt;
+    }
+
+    function yyyymmddETOf(dateObj){
+      const p = etParts(dateObj);
+      return `${p.y}${String(p.m).padStart(2,'0')}${String(p.day).padStart(2,'0')}`;
+    }
+
+    function labelForET(dateObj){
+      const p = etParts(dateObj);
+      const d = new Date(dateObj);
+      const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${dayNames[d.getUTCDay()]} ${monthNames[p.m-1]} ${String(p.day).padStart(2,'0')} @ 3:00 AM ET`;
+    }
+
+    // ---- countdown + status
+    const lockEl = document.getElementById('lockCountdown');
+    const dayLabel = document.getElementById('dayLabel');
+    const dateLabel = document.getElementById('dateLabel');
+    const openStatus = document.getElementById('openStatus');
+
+    function tick(){
+      const t = nextLockET();
+      const now = new Date();
+      const diff = t - now;
+      if (diff <= 0) { lockEl.textContent = 'LOCKED'; return; }
+      const h = String(Math.floor(diff/3600000)).padStart(2,'0');
+      const m = String(Math.floor((diff%3600000)/60000)).padStart(2,'0');
+      const s = String(Math.floor((diff%60000)/1000)).padStart(2,'0');
+      lockEl.textContent = `${h}:${m}:${s}`;
+      dayLabel.textContent = 'Next lock:';
+      dateLabel.textContent = ' ' + labelForET(t);
+
+      // Show if editor is open
+      openStatus.textContent = editorOpenNow() ? '' : '(editor opens 4:00 AM ET)';
+      document.getElementById('btnSubmit').disabled = !editorOpenNow();
+    }
+    setInterval(tick, 1000); tick();
+
     // ------- display name resolver (for payload) -------
     async function getDisplayName(db, user){
       try {
@@ -129,29 +221,6 @@
         return user.displayName || user.email || user.uid;
       }
     }
-
-    // ---- countdown
-    const lockEl = document.getElementById('lockCountdown');
-    const dayLabel = document.getElementById('dayLabel');
-    const dateLabel = document.getElementById('dateLabel');
-
-    function nextLock(){
-      const scheduleDays = [4,5,6,7,11,12,13,14]; // Sept 2025
-      const now = new Date();
-      const nowET = new Date(now.getTime() - 4*3600*1000);
-      const daysET = scheduleDays.map(d => new Date(Date.UTC(2025,8,d,0,0,0)));
-      let idx = daysET.findIndex(d => nowET <= d);
-      if (idx === -1) idx = daysET.length - 1;
-      const todayET = daysET[idx];
-      const noonET = new Date(Date.UTC(todayET.getUTCFullYear(), todayET.getUTCMonth(), todayET.getUTCDate(), 16, 0, 0));
-      const sameDay = nowET.getUTCFullYear()===todayET.getUTCFullYear() && nowET.getUTCMonth()===todayET.getUTCMonth() && nowET.getUTCDate()===todayET.getUTCDate();
-      if (sameDay && now.getTime() >= noonET.getTime() && idx < daysET.length - 1) idx++;
-      const targetDay = scheduleDays[idx];
-      return new Date(Date.UTC(2025,8,targetDay,11,0,0)); // 07:00 ET
-    }
-    function yyyymmdd(d){ return `${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,'0')}${String(d.getUTCDate()).padStart(2,'0')}`; }
-    function labelFor(d){ const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${days[d.getUTCDay()]} ${months[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2,'0')} @ 07:00 ET`; }
-    function tick(){ const t=nextLock(), now=new Date(); const diff=t-now; if(diff<=0){ lockEl.textContent='LOCKED'; return;} const h=String(Math.floor(diff/3600000)).padStart(2,'0'); const m=String(Math.floor((diff%3600000)/60000)).padStart(2,'0'); const s=String(Math.floor((diff%60000)/1000)).padStart(2,'0'); lockEl.textContent=`${h}:${m}:${s}`; dayLabel.textContent='Next lock:'; dateLabel.textContent=' '+labelFor(t);} setInterval(tick,1000); tick();
 
     // ---- form selects
     const selects = {
@@ -210,7 +279,7 @@
     async function prefillSavedLineup(){
       try{
         const user = auth.currentUser; if (!user) return;
-        const dateKey = yyyymmdd(nextLock());
+        const dateKey = yyyymmddETOf(nextLockET());
         const snap = await getDoc(doc(db,'lineups', `${CURRENT_TID}_${dateKey}_${user.uid}`));
         if (!snap.exists()) return;
         const L = snap.data();
@@ -254,12 +323,13 @@
     document.getElementById('btnSubmit').onclick = async () => {
       const user = auth.currentUser; const out = document.getElementById('slStatus');
       if (!user){ out.textContent='Please sign in first.'; return; }
+      if (!editorOpenNow()){ out.textContent='Editor opens at 4:00 AM ET.'; return; }
       if (!validateOnSubmit()) return;
 
       out.textContent = 'Submitting…';
       try{
-        const dateKey = yyyymmdd(nextLock());
-        const managerName = await getDisplayName(db, user);   // <-- NEW
+        const dateKey = yyyymmddETOf(nextLockET());
+        const managerName = await getDisplayName(db, user);
 
         const payload = {
           tid: CURRENT_TID,
@@ -268,9 +338,8 @@
           cores: [selects.core1.value, selects.core2.value, selects.core3.value],
           supports: [selects.sup1.value, selects.sup2.value],
           teamCard: selects.team.value,
-          // helpful for admin export / visibility:
           mid: user.uid,
-          managerName,                     // <-- NEW
+          managerName,
         };
 
         const call = httpsCallable(functions, 'submitLineup');
