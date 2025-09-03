@@ -37,22 +37,34 @@
       <div class="text-sm text-gray-300 mt-1">Ask an admin to grant the <code>admin: true</code> custom claim.</div>
     </div>
 
+    <!-- Toolbar -->
     <section id="adminToolbar" class="card p-4 mb-6 hidden">
-      <div class="grid sm:grid-cols-2 gap-4">
-        <div class="flex items-end gap-2">
-          <div class="grow">
-            <label class="block text-xs text-gray-300 mb-1">Day (YYYYMMDD)</label>
-            <input id="dayKey" class="w-full px-3 py-2 rounded-lg" placeholder="20250904">
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-end gap-3">
+          <div class="flex flex-col">
+            <label for="dayKey" class="block text-xs text-gray-300 mb-1">Day (YYYYMMDD)</label>
+            <input id="dayKey" class="px-3 py-2 rounded-lg w-32" placeholder="20250904">
           </div>
-          <button id="btnRescore" class="px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white font-semibold">Force Rescore</button>
-          <button id="btnExport" class="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">Download JSON</button>
+          <button id="btnRescore" class="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white font-semibold">
+            Force Rescore
+          </button>
+          <button id="btnExport" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">
+            Download JSON
+          </button>
+          <button id="btnEditLineups" class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-semibold">
+            Edit Lineups
+          </button>
         </div>
-        <div class="text-sm text-gray-300">Use the day key to rescore or export the raw stats + picks snapshot for that date.</div>
+        <div class="text-sm text-gray-300">
+          Use the day key to rescore or export the raw stats + picks snapshot for that date.
+        </div>
+        <div id="adminToolbarStatus" class="text-sm text-gray-300"></div>
       </div>
-      <div id="adminToolbarStatus" class="text-sm text-gray-300 mt-2"></div>
     </section>
 
+    <!-- Panels -->
     <div id="adminPanels" class="grid grid-cols-1 lg:grid-cols-2 gap-6 hidden">
+      <!-- Players -->
       <section class="card p-4">
         <div class="flex items-center justify-between mb-3">
           <div class="font-semibold">Players — Eligibility</div>
@@ -68,6 +80,7 @@
         <div id="playersWrap" class="space-y-4 max-h-[70vh] overflow-y-auto pr-2"></div>
       </section>
 
+      <!-- Teams -->
       <section class="card p-4">
         <div class="flex items-center justify-between mb-3">
           <div class="font-semibold">Teams — Eligibility</div>
@@ -95,6 +108,86 @@
         </div>
       </section>
     </div>
+
+    <!-- Edit Lineups Modal -->
+    <div id="editLineupsModal" class="fixed inset-0 z-50 hidden">
+      <div class="absolute inset-0 bg-black/60"></div>
+      <div class="relative max-w-3xl mx-auto mt-16 card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="font-semibold text-lg">Edit Lineups</div>
+          <button id="closeEditLineups" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white">Close</button>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-3 mb-4">
+          <div>
+            <label class="block text-xs text-gray-300 mb-1">Day (YYYYMMDD)</label>
+            <input id="elDayKey" class="w-full px-3 py-2 rounded-lg" placeholder="20250904">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-gray-300 mb-1">User (UID or Email)</label>
+            <div class="flex gap-2">
+              <input id="elUserQuery" class="w-full px-3 py-2 rounded-lg" placeholder="uid_abc123 or name@example.com">
+              <button id="elLookup" class="px-3 py-2 rounded-lg bg-slate-700 text-white">Load</button>
+            </div>
+            <div id="elUserResolved" class="text-xs text-gray-300 mt-1"></div>
+          </div>
+        </div>
+
+        <!-- 7 boxes -->
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="card p-3">
+            <div class="text-sm font-medium mb-2">Captain (any role)</div>
+            <select id="selCaptain" class="px-3 py-2 rounded-lg w-full">
+              <option value="">Select captain</option>
+            </select>
+          </div>
+
+          <div class="card p-3">
+            <div class="text-sm font-medium mb-2">Team</div>
+            <select id="selTeam" class="px-3 py-2 rounded-lg w-full">
+              <option value="">Select team</option>
+            </select>
+            <div class="text-xs text-gray-400 mt-1">Writes to <code>teamCard</code>.</div>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-4 mt-4">
+          <div class="card p-3">
+            <div class="text-sm font-medium mb-2">Core 1</div>
+            <select id="selCore1" class="px-3 py-2 rounded-lg w-full"></select>
+          </div>
+          <div class="card p-3">
+            <div class="text-sm font-medium mb-2">Core 2</div>
+            <select id="selCore2" class="px-3 py-2 rounded-lg w-full"></select>
+          </div>
+          <div class="card p-3">
+            <div class="text-sm font-medium mb-2">Core 3</div>
+            <select id="selCore3" class="px-3 py-2 rounded-lg w-full"></select>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 mt-4">
+          <div class="card p-3">
+            <div class="text-sm font-medium mb-2">Support 1</div>
+            <select id="selSup1" class="px-3 py-2 rounded-lg w-full"></select>
+          </div>
+          <div class="card p-3">
+            <div class="text-sm font-medium mb-2">Support 2</div>
+            <select id="selSup2" class="px-3 py-2 rounded-lg w-full"></select>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3 mt-4">
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input id="elOverrideLock" type="checkbox" class="w-4 h-4">
+            <span>Override lock for this user/day</span>
+          </label>
+          <button id="elSave" class="ml-auto px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">Save Lineup</button>
+        </div>
+
+        <div id="elStatus" class="text-sm text-gray-300 mt-3"></div>
+      </div>
+    </div>
   </main>
 
   <script type="module">
@@ -104,6 +197,7 @@
     import { getFirestore, collection, query, where, getDocs, updateDoc, doc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
     import { setupAuthUI } from "./assets/auth-ui.js";
 
+    // Firebase app
     const app = initializeApp({
       apiKey: "AIzaSyAx8jWSAZdR_rzgVP8XumxNOvsy86bjl-Q",
       authDomain: "internationalfantasy2025.firebaseapp.com",
@@ -117,6 +211,15 @@
     const functions = getFunctions(app, 'us-central1');
     const CURRENT_TID = "ti2025";
 
+    // ---------- helpers ----------
+    function teamKey(x){
+      return String(x || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_'); // "Yakutou Brothers" -> "yakutou_brothers"
+    }
+
+    // Admin gate
     const adminToolbar = document.getElementById('adminToolbar');
     const toolbarStatus = document.getElementById('adminToolbarStatus');
     const panels = document.getElementById('adminPanels');
@@ -137,7 +240,9 @@
       if (isAdmin) { loadPlayers(); loadTeams(); }
     });
 
+    // Toolbar actions
     const dayKey = document.getElementById('dayKey');
+
     document.getElementById('btnRescore').onclick = async () => {
       const dk = (dayKey.value || '').trim();
       if (!/^\d{8}$/.test(dk)) { toolbarStatus.textContent = 'Enter a date like 20250904'; return; }
@@ -167,6 +272,7 @@
       }catch(err){ toolbarStatus.textContent = 'Error: ' + (err.message || err); }
     };
 
+    // ===== Players panel =====
     const playersStatus = document.getElementById('playersStatus');
     const playersWrap = document.getElementById('playersWrap');
     const playerSearch = document.getElementById('playerSearch');
@@ -245,12 +351,15 @@
     }
     playerSearch.addEventListener('input', () => renderPlayers(playerSearch.value));
 
+    // ===== Teams panel =====
     const teamsStatus = document.getElementById('teamsStatus');
     const teamsTbody = document.getElementById('teamsTbody');
     const teamSearch = document.getElementById('teamSearch');
     document.getElementById('refreshTeams').onclick = () => loadTeams();
 
     let cachedTeams = [];
+    let pendingTeamPrefill = ''; // handle race: load() before teams loaded
+
     function renderTeams(filter=''){
       const term = filter.trim().toLowerCase();
       teamsTbody.innerHTML = '';
@@ -290,13 +399,215 @@
             id: d.id,
             name: t.name || t.orgName || d.id,
             orgId: String(t.orgId || d.id),
-            eligible: !!t.eligible
+            eligible: !!t.eligible,
+            key: teamKey(t.name || t.orgName || d.id) // canonical key for matching
           });
         });
         renderTeams(teamSearch.value);
+        // If a lineup was loaded before teams, try to prefill now
+        if (pendingTeamPrefill) {
+          fillTeamOptions(pendingTeamPrefill);
+          pendingTeamPrefill = '';
+        }
       }catch(err){ teamsStatus.textContent = 'Error: '+(err.message||err); }
     }
     teamSearch.addEventListener('input', () => renderTeams(teamSearch.value));
+
+    // ===== Edit Lineups Modal logic =====
+    const btnEditLineups = document.getElementById('btnEditLineups');
+    const editLineupsModal = document.getElementById('editLineupsModal');
+    const closeEditLineups = document.getElementById('closeEditLineups');
+
+    const elDayKey = document.getElementById('elDayKey');
+    const elUserQuery = document.getElementById('elUserQuery');
+    const elLookup = document.getElementById('elLookup');
+    const elUserResolved = document.getElementById('elUserResolved');
+    const elOverrideLock = document.getElementById('elOverrideLock');
+    const elSave = document.getElementById('elSave');
+    const elStatus = document.getElementById('elStatus');
+
+    // 7 selects
+    const selCaptain = document.getElementById('selCaptain');
+    const selTeam    = document.getElementById('selTeam');
+    const selCore1   = document.getElementById('selCore1');
+    const selCore2   = document.getElementById('selCore2');
+    const selCore3   = document.getElementById('selCore3');
+    const selSup1    = document.getElementById('selSup1');
+    const selSup2    = document.getElementById('selSup2');
+
+    // Role matchers (lenient)
+    function isCoreRole(role=''){
+      const r = String(role).toLowerCase();
+      return r.includes('core') || r === '1' || r === '2' || r === '3' ||
+             r.includes('carry') || r.includes('mid') || r.includes('offlane');
+    }
+    function isSupportRole(role=''){
+      const r = String(role).toLowerCase();
+      return r.includes('support') || r === '4' || r === '5' ||
+             r.includes('soft') || r.includes('hard');
+    }
+
+    function option(el, value, label, selectedValue){
+      const o = document.createElement('option');
+      o.value = String(value);
+      o.textContent = label;
+      el.appendChild(o);
+      if (selectedValue != null && String(selectedValue) === String(value)) el.value = String(value);
+    }
+
+    function fillCaptainOptions(selected){
+      selCaptain.innerHTML = '';
+      option(selCaptain, '', 'Select captain', null);
+      (cachedPlayers||[])
+        .filter(p => p.eligible)
+        .sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')))
+        .forEach(p=> option(selCaptain, p.steam32, `${p.name || p.steam32} — ${p.orgName || 'Unknown'}`, selected));
+    }
+
+    function fillCoreOptions(selecteds = []){
+      const targets = [selCore1, selCore2, selCore3];
+      targets.forEach((sel, idx)=>{
+        sel.innerHTML = '';
+        option(sel, '', `Select core ${idx+1}`, null);
+        (cachedPlayers||[])
+          .filter(p => p.eligible && isCoreRole(p.role))
+          .sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')))
+          .forEach(p=> option(sel, p.steam32, `${p.name || p.steam32} — ${p.orgName || 'Unknown'}`, selecteds[idx]));
+      });
+    }
+
+    function fillSupportOptions(selecteds = []){
+      const targets = [selSup1, selSup2];
+      targets.forEach((sel, idx)=>{
+        sel.innerHTML = '';
+        option(sel, '', `Select support ${idx+1}`, null);
+        (cachedPlayers||[])
+          .filter(p => p.eligible && isSupportRole(p.role))
+          .sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')))
+          .forEach(p=> option(sel, p.steam32, `${p.name || p.steam32} — ${p.orgName || 'Unknown'}`, selecteds[idx]));
+      });
+    }
+
+    function fillTeamOptions(selected){
+      // selected may be a slug or raw name; normalize to slug for matching
+      const wanted = teamKey(selected);
+      selTeam.innerHTML = '';
+      option(selTeam, '', 'Select team', null);
+
+      (cachedTeams||[])
+        .filter(t => t.eligible)
+        .sort((a,b)=> a.name.localeCompare(b.name))
+        .forEach(t=>{
+          // Use canonical key for value; human-readable name for label
+          option(selTeam, t.key, t.name, null);
+        });
+
+      if (wanted) {
+        const hit = Array.from(selTeam.options).find(o => o.value === wanted);
+        if (hit) selTeam.value = wanted;
+      }
+    }
+
+    function openEditor(){
+      const dk = (dayKey?.value || '').trim();
+      if (/^\d{8}$/.test(dk)) elDayKey.value = dk;
+      elStatus.textContent = '';
+      elUserResolved.textContent = '';
+      elUserQuery.value = '';
+      elOverrideLock.checked = false;
+
+      fillCaptainOptions('');
+      fillCoreOptions([]);
+      fillSupportOptions([]);
+      fillTeamOptions('');
+
+      editLineupsModal.classList.remove('hidden');
+    }
+
+    btnEditLineups?.addEventListener('click', openEditor);
+    closeEditLineups?.addEventListener('click', () => editLineupsModal.classList.add('hidden'));
+
+    async function lookupUserAndLineup(){
+      const dk = (elDayKey.value || '').trim();
+      const q  = (elUserQuery.value || '').trim();
+      if (!/^\d{8}$/.test(dk)) { elStatus.textContent = 'Enter a valid day like 20250904.'; return; }
+      if (!q) { elStatus.textContent = 'Enter a UID or an email.'; return; }
+
+      elStatus.textContent = 'Loading user + lineup…';
+      try{
+        const callGet = httpsCallable(functions, 'adminGetLineup');
+        // returns { uid, email, locked, captain, cores, supports, teamCard }
+        const { data } = await callGet({ tid: CURRENT_TID, dateKey: dk, user: q });
+
+        const resolvedTeam = data?.teamCard || '';
+        // If teams not loaded yet, remember what to prefill
+        if (!cachedTeams.length) pendingTeamPrefill = resolvedTeam;
+
+        elUserResolved.textContent = data?.uid
+          ? `Resolved user: ${data.email || '(no email)'} — UID: ${data.uid}${data?.locked ? ' — (LOCKED)' : ''}`
+          : 'User not found';
+
+        // Prefill 7 boxes
+        fillCaptainOptions(data?.captain || '');
+        fillCoreOptions([...(data?.cores || [])]);
+        fillSupportOptions([...(data?.supports || [])]);
+        fillTeamOptions(resolvedTeam);
+
+        // keep UID for save
+        window.__admin_uid = data?.uid || null;
+
+        elStatus.textContent = 'Loaded.';
+      }catch(err){
+        console.error('adminGetLineup error:', err);
+        elStatus.textContent = 'Error: ' + (err.message || err);
+      }
+    }
+    document.getElementById('elLookup').addEventListener('click', lookupUserAndLineup);
+
+    function anyDuplicates(arr){ return new Set(arr).size !== arr.length; }
+
+    document.getElementById('elSave').addEventListener('click', async ()=>{
+      const dk = (elDayKey.value || '').trim();
+      const uid = window.__admin_uid || null;
+      if (!/^\d{8}$/.test(dk)) { elStatus.textContent = 'Enter a valid day like 20250904.'; return; }
+      if (!uid) { elStatus.textContent = 'Load a user first.'; return; }
+
+      const captain  = (selCaptain.value || '').trim();
+      const cores    = [selCore1.value, selCore2.value, selCore3.value].map(v => (v||'').trim()).filter(Boolean);
+      const supports = [selSup1.value, selSup2.value].map(v => (v||'').trim()).filter(Boolean);
+      // Save the team as the canonical key (underscored), so it matches existing docs
+      const teamCard = (selTeam.value || '').trim();
+
+      if (!captain) { elStatus.textContent = 'Select a captain.'; return; }
+      if (cores.length !== 3) { elStatus.textContent = 'Select exactly 3 cores.'; return; }
+      if (supports.length !== 2) { elStatus.textContent = 'Select exactly 2 supports.'; return; }
+      if (!teamCard) { elStatus.textContent = 'Select a team.'; return; }
+
+      // Captain is a distinct 6th player — enforce uniqueness across all six
+      const allSix = [captain, ...cores, ...supports].map(String);
+      if (anyDuplicates(allSix)) {
+        elStatus.textContent = 'Players must be unique across captain/cores/supports.'; return;
+      }
+
+      elStatus.textContent = 'Saving…';
+      try{
+        const callSet = httpsCallable(functions, 'adminSetLineup');
+        const { data } = await callSet({
+          tid: CURRENT_TID,
+          dateKey: dk,
+          uid,
+          captain,
+          cores,
+          supports,
+          teamCard, // canonical key (e.g., "yakutou_brothers")
+          overrideLock: !!document.getElementById('elOverrideLock').checked
+        });
+        elStatus.textContent = `Saved. ${data?.message || ''}`;
+      }catch(err){
+        console.error('adminSetLineup error:', err);
+        elStatus.textContent = 'Error: ' + (err.message || err);
+      }
+    });
   </script>
 </body>
 </html>

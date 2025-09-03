@@ -6,7 +6,7 @@
   <title>International Fantasy — Submit Lineup</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root { --bg:url('./international_2025_ls_3_4k.jpg'); }
+    :root { --bg:url('../international_2025_ls_3_4k.jpg'); }
     body{
       min-height:100vh; color:#e6e8eb; position:relative; overflow-x:hidden; background:#0b0d0f;
     }
@@ -61,7 +61,7 @@
 
       <div class="grid grid-cols-1 gap-6">
         <div>
-          <label class="hlbl">Captain</label>
+          <label class="hlbl">Captain - 1.5x</label>
           <select id="dd_captain" class="w-full rounded-lg px-3 py-2 shadow"></select>
         </div>
 
@@ -119,6 +119,18 @@
     const functions = getFunctions(app, 'us-central1');
     const CURRENT_TID = "ti2025";
 
+    // ------- display name resolver (for payload) -------
+    async function getDisplayName(db, user){
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        const fromUsers = snap.exists() ? (snap.data().name || '') : '';
+        return fromUsers || user.displayName || user.email || user.uid;
+      } catch {
+        return user.displayName || user.email || user.uid;
+      }
+    }
+
+    // ---- countdown
     const lockEl = document.getElementById('lockCountdown');
     const dayLabel = document.getElementById('dayLabel');
     const dateLabel = document.getElementById('dateLabel');
@@ -141,6 +153,7 @@
     function labelFor(d){ const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${days[d.getUTCDay()]} ${months[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2,'0')} @ 07:00 ET`; }
     function tick(){ const t=nextLock(), now=new Date(); const diff=t-now; if(diff<=0){ lockEl.textContent='LOCKED'; return;} const h=String(Math.floor(diff/3600000)).padStart(2,'0'); const m=String(Math.floor((diff%3600000)/60000)).padStart(2,'0'); const s=String(Math.floor((diff%60000)/1000)).padStart(2,'0'); lockEl.textContent=`${h}:${m}:${s}`; dayLabel.textContent='Next lock:'; dateLabel.textContent=' '+labelFor(t);} setInterval(tick,1000); tick();
 
+    // ---- form selects
     const selects = {
       captain: document.getElementById('dd_captain'),
       core1: document.getElementById('dd_core1'),
@@ -246,14 +259,20 @@
       out.textContent = 'Submitting…';
       try{
         const dateKey = yyyymmdd(nextLock());
+        const managerName = await getDisplayName(db, user);   // <-- NEW
+
         const payload = {
           tid: CURRENT_TID,
           dateKey,
           captain: selects.captain.value,
           cores: [selects.core1.value, selects.core2.value, selects.core3.value],
           supports: [selects.sup1.value, selects.sup2.value],
-          teamCard: selects.team.value
+          teamCard: selects.team.value,
+          // helpful for admin export / visibility:
+          mid: user.uid,
+          managerName,                     // <-- NEW
         };
+
         const call = httpsCallable(functions, 'submitLineup');
         const { data } = await call(payload);
         out.textContent = data?.ok ? 'Saved!' : 'Saved.';

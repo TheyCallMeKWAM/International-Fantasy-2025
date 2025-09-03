@@ -1,18 +1,48 @@
-rules_version='2'
-
+// firestore.rules
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2025, 9, 17);
+    function signedIn() { return request.auth != null; }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function isAdmin() { return signedIn() && request.auth.token.admin == true; }
+
+    // ---- Users: private (public UI doesn't need these)
+    match /users/{uid} {
+      allow read, create, update: if isSelf(uid);
+      allow delete: if false; // or isAdmin()
+    }
+
+    // ---- Leaderboards: public read, admin write
+    match /leaderboards/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Players & Teams: public read, admin manage (for your admin UI)
+    match /players/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /teams/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Lineups (flat collection):
+    // Doc id format: <tid>_<dateKey>_<uid>
+    // - Public read but ONLY for allowed tournaments (so roster can render)
+    // - Owner or admin can create/update
+    // - Only admin can delete
+    match /lineups/{docId} {
+      // PUBLIC READ for specific events (adjust the list as needed)
+      allow read: if resource.data.tid in ['ti2025', 'ti2024'];
+
+      // OWNER or ADMIN may create/update
+      allow create, update: if isAdmin() ||
+                            (signedIn() && docId.matches('^[^_]+_[^_]+_' + request.auth.uid + '$'));
+
+      // Delete only by admin (prevents users from erasing history)
+      allow delete: if isAdmin();
     }
   }
 }

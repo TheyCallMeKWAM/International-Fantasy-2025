@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>International Fantasy — Leaderboard</title>
+  <title>International Fantasy</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root { --bg-url: url("./international_2025_ls_3_4k.jpg"); }
@@ -22,61 +22,157 @@
       box-shadow: 0 18px 50px rgba(0,0,0,.45);
     }
     .chip{ background: rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.18); }
-    input, select { color:#111827 !important; background:#ffffff !important; }
-    input:focus, select:focus {
-      outline: 2px solid rgba(99,102,241,.6);
-      box-shadow: 0 0 0 4px rgba(99,102,241,.20);
+    .chip-btn{ cursor:pointer; user-select:none; transition:all .2s ease; }
+    .chip-btn.active{ background:#6366f1; border-color:#818cf8; color:white; }
+
+    *{ scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.6) transparent; }
+    ::-webkit-scrollbar{ width:10px; height:10px; }
+    ::-webkit-scrollbar-track{
+      background: linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+      border-radius: 9999px;
     }
-    th, td { white-space: nowrap; }
+    ::-webkit-scrollbar-thumb{
+      background: linear-gradient(180deg,rgba(148,163,184,.85),rgba(203,213,225,.85));
+      border-radius: 9999px; border: 2px solid rgba(17,24,39,.45);
+    }
+    ::-webkit-scrollbar-thumb:hover{
+      background: linear-gradient(180deg,rgba(180,193,210,.95),rgba(226,232,240,.95));
+    }
+
+    .rank-badge{ font-variant-numeric: tabular-nums; }
+    .medal-1{ background: linear-gradient(135deg,#ffd700,#ffb100); color:#111; }
+    .medal-2{ background: linear-gradient(135deg,#c0c0c0,#a8a8a8); color:#111; }
+    .medal-3{ background: linear-gradient(135deg,#cd7f32,#b36a25); color:#111; }
+
+    .podium{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap:.9rem; }
+    .podium > .podium-card{ transform-origin:center bottom; }
+    .podium > .first{ order:2; transform: translateY(-6px) scale(1.03); }
+    .podium > .second{ order:1; }
+    .podium > .third{ order:3; }
+    .podium .card{ min-height:140px; }
+    @media (min-width:768px){ .podium .card{ min-height:165px; } }
+
+    .flip-animate{ transition: transform .5s cubic-bezier(.2,.7,.2,1), opacity .3s ease; will-change: transform; }
+    .trend-up{ color:#34d399; } .trend-down{ color:#f87171; } .trend-flat{ color:#9ca3af; }
+    .details{ display:none; } .row-open .details{ display:block; }
+
+    .flip-card{ cursor:pointer; }
+    .flip-inner{ position:relative; width:100%; height:100%; }
+    .flip-face{
+      position:absolute; inset:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:.6rem; padding:1rem;
+      transition: transform .45s cubic-bezier(.2,.7,.2,1), opacity .3s ease;
+      transform: rotateY(0); opacity:1;
+    }
+    .flip-face.back{
+      transform: rotateY(180deg);
+      opacity:0;
+      justify-content:center; align-items:center;
+      overflow:hidden; padding:1rem;
+    }
+    .flipped .flip-face.front{ transform: rotateY(180deg); opacity:0; pointer-events:none; }
+    .flipped .flip-face.back{  transform: rotateY(0);    opacity:1; pointer-events:auto; }
+
+    .mini-columns{
+      width:100%; max-width:560px;
+      display:grid; grid-template-columns: 1fr 1fr; gap:22px;
+      align-items:start;
+    }
+    .mini-grid{ display:grid; grid-template-columns: 1fr auto; column-gap:18px; row-gap:.35rem; font-size:.95rem; }
+
+    .popover{ position:relative; }
+    .popover-menu{
+      position:absolute; top:110%; right:0;
+      background: rgba(17,24,39,.94);
+      border: 1px solid rgba(255,255,255,.15);
+      border-radius: 12px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.5);
+      padding: .35rem; min-width: 180px;
+      backdrop-filter: blur(8px);
+      display: none; z-index: 50;
+    }
+    .popover.open .popover-menu{ display:block; }
+    .menu-item{ padding: .5rem .65rem; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+    .menu-item:hover{ background: rgba(99,102,241,.25); }
   </style>
+
+  <script>
+    /* TI2024 seed so the page renders immediately if toggled */
+    window.ti2024NameMap = {
+      uid_william:"William", uid_aiden:"Aiden", uid_daniel:"Daniel",
+      uid_evan:"Evan", uid_sean:"Sean", uid_jake:"Jake",
+      uid_david:"David", uid_spencer:"Spencer", uid_tommy:"Tommy",
+    };
+    (function buildTI2024Seed(){
+      const M = [
+        { uid:"uid_william", scores:[1468.96,1849.12,1114.74,913.55,618.65,1875.19,1763.89,947.38,328.99,862.11] },
+        { uid:"uid_aiden",   scores:[1506.29,1900.65,1126.54,944.55,859.06,1961.93,1726.28,319.17,920.30,1352.53] },
+        { uid:"uid_daniel",  scores:[1451.45,1628.58,1111.93,682.77,716.16,1732.99,1676.96,1095.39,1171.23,1295.33] },
+        { uid:"uid_evan",    scores:[1731.38,1104.64,1135.74,822.13,1078.00,1517.67,1676.96,803.56,328.99,1662.48] },
+        { uid:"uid_sean",    scores:[1478.75,787.24,1189.58,937.44,645.24,1254.25,1061.44,613.57,1066.09,862.11] },
+        { uid:"uid_jake",    scores:[1506.21,1102.51,1050.35,1059.69,604.31,1735.35,1766.20,1177.93,1667.87,1705.28] },
+        { uid:"uid_david",   scores:[1245.58,937.96,1111.93,822.13,539.12,1520.11,859.04,1128.68,328.99,1389.76] },
+        { uid:"uid_spencer", scores:[1348.17,1771.96,1042.95,991.55,765.64,545.94,497.36,726.11,891.19,1162.48] },
+        { uid:"uid_tommy",   scores:[925.35,1575.94,1135.57,711.29,711.65,1426.11,1045.60,614.16,2001.10,1285.07] },
+      ];
+      const days=10, idFor=i=>`ti2024_2024-Day-${String(i+1).padStart(2,'0')}`;
+      window.ti2024Seed = Array.from({length:days},(_,i)=>({
+        id:idFor(i), data:{ entries:M.map(m=>({ mid:m.uid, totalPoints:Number(m.scores[i]||0) })) }
+      }));
+    })();
+
+    window.phaseConfig = {
+      ti2024: { "Group Stage":[1,2,3,4], "Event Playoffs":[5,6,7], "Main Event":[8,9,10] },
+      ti2025: { "Group Stage & Special Eliminator":[1,2,3,4], "Playoffs":[5,6,7,8] }
+    };
+  </script>
 </head>
 <body>
   <header class="max-w-6xl mx-auto px-4 pt-10 pb-6 flex items-center justify-between">
     <div>
       <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight drop-shadow">INTERNATIONAL FANTASY</h1>
-      <p class="text-sm text-gray-300">Group Stage + Playoffs Fantasy</p>
     </div>
     <div id="authBox" class="flex gap-3 items-center"></div>
   </header>
 
   <main class="max-w-6xl mx-auto px-4 pb-24">
-    <div class="flex gap-3 items-center mb-6">
-      <span class="px-3 py-1 rounded-full chip text-sm">TI 2025</span>
+    <div class="flex flex-wrap gap-3 items-center mb-6">
+      <span id="pill-2025" class="px-3 py-1 rounded-full chip chip-btn text-sm">TI 2025</span>
+      <span id="pill-2024" class="px-3 py-1 rounded-full chip chip-btn text-sm">TI 2024</span>
       <a href="submit.html" class="ml-auto px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-semibold shadow">Submit Lineup</a>
     </div>
 
     <section class="card rounded-2xl p-4 md:p-6">
-      <div class="flex flex-col md:flex-row md:items-end gap-3 mb-4">
-        <div class="grow">
-          <label class="block text-sm mb-1">Tournament</label>
-          <input class="w-full rounded-lg px-3 py-2" value="ti2025" disabled />
+      <div id="lbStatus" class="text-sm text-gray-300 mb-4"></div>
+
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div id="phaseTabsInner" class="flex flex-wrap gap-2"></div>
+
+        <div id="daySortBox" class="popover ml-auto">
+          <button id="daySortBtn" type="button" aria-expanded="false"
+                  class="px-3 py-1 rounded-full chip chip-btn text-sm inline-flex items-center gap-1">
+            <span id="daySortLabel">Sort by Day</span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M6 9l6 6 6-6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div id="daySortMenu" class="popover-menu"></div>
         </div>
-        <div class="grow">
-          <label class="block text-sm mb-1">Sort</label>
-          <select id="lb_sort" class="w-full rounded-lg px-3 py-2">
-            <option value="total_desc">Total (high → low)</option>
-            <option value="total_asc">Total (low → high)</option>
-            <option value="date_desc">By Date (latest first)</option>
-            <option value="date_asc">By Date (oldest first)</option>
-          </select>
-        </div>
-        <button id="btnLoadLb" class="h-10 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-semibold shadow">Load Leaderboards</button>
       </div>
 
-      <div id="lbDates" class="flex flex-wrap gap-2 mb-3"></div>
-      <div id="lbStatus" class="text-sm text-gray-300 mb-3"></div>
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead class="text-left text-gray-300" id="lbHead"></thead>
-          <tbody id="lbRows"></tbody>
-        </table>
+      <div id="podium" class="podium mb-6"></div>
+
+      <div class="max-h-[520px] overflow-auto rounded-xl border border-white/15">
+        <ul id="lbList" class="divide-y divide-white/10"></ul>
       </div>
     </section>
   </main>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
-    import { getFirestore, collection, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+    import {
+      getFirestore, collection, onSnapshot, getDocs, doc, getDoc, query, where
+    } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
     import { setupAuthUI } from "./assets/auth-ui.js";
 
     const app = initializeApp({
@@ -87,82 +183,360 @@
       messagingSenderId:"864977028555",
       appId:"1:864977028555:web:8038b630cba08cc661624e"
     });
-
     const { db } = setupAuthUI({ app, headerEl: document.getElementById('authBox'), cardClass: 'card' });
 
-    const CURRENT_TID = "ti2025";
+    // Elements
+    const pill2025 = document.getElementById('pill-2025');
+    const pill2024 = document.getElementById('pill-2024');
+    const phaseTabsInner = document.getElementById('phaseTabsInner');
     const lbStatus = document.getElementById('lbStatus');
-    const lbRows = document.getElementById('lbRows');
-    const lbHead = document.getElementById('lbHead');
-    const lbDates = document.getElementById('lbDates');
-    const lbSort = document.getElementById('lb_sort');
+    const podiumEl = document.getElementById('podium');
+    const listEl   = document.getElementById('lbList');
+    const daySortBox = document.getElementById('daySortBox');
+    const daySortBtn = document.getElementById('daySortBtn');
+    const daySortLabel = document.getElementById('daySortLabel');
+    const daySortMenu = document.getElementById('daySortMenu');
 
-    document.getElementById('btnLoadLb').onclick = async () => {
-      lbStatus.textContent = 'Loading…';
-      lbRows.innerHTML = ''; lbHead.innerHTML = ''; lbDates.innerHTML='';
+    // State
+    let currentTid = 'ti2025';      // show TI2025 first
+    let currentPhase = null;        // null => Overall
+    let prevRanks = new Map();
+    let unsubscribe = null;
+    let cachedDocs = { ti2024: null, ti2025: null };
+    let sortByDayIndex = null;
 
-      try{
-        const snaps = await getDocs(collection(db, 'leaderboards'));
-        const dayDocs = [];
-        snaps.forEach(d => { if (d.id.startsWith(CURRENT_TID + '_')) dayDocs.push({ id: d.id, data: d.data() }); });
-        if (!dayDocs.length){ lbStatus.textContent = 'No leaderboards yet.'; return; }
+    // Live set of submitters + display-name fallbacks from lineups
+    const submitterRoster = { ti2024: new Set(), ti2025: new Set() };
+    const rosterNameMap   = { ti2024: {},      ti2025: {}      };
+    let unwatchSubmitters = null;
 
-        let dateKeys = dayDocs.map(x => x.id.split('_')[1]).sort();
-        if (lbSort.value === 'date_desc') dateKeys.reverse();
+    // UI helpers
+    function markYearPillActive(){
+      pill2025.classList.toggle('active', currentTid==='ti2025');
+      pill2024.classList.toggle('active', currentTid==='ti2024');
+    }
+    function buildInnerPhaseTabs(){
+      phaseTabsInner.innerHTML = '';
+      const conf = window.phaseConfig[currentTid] || {};
+      const phases = Object.keys(conf);
+      if (currentPhase && !phases.includes(currentPhase)) currentPhase = null;
+      phases.forEach(phase=>{
+        const el = document.createElement('span');
+        el.className = 'px-3 py-1 rounded-full chip chip-btn text-sm ' + (phase===currentPhase?'active':'');
+        el.textContent = phase;
+        el.onclick = ()=>{
+          currentPhase = (currentPhase === phase) ? null : phase;
+          renderFromCache();
+        };
+        phaseTabsInner.appendChild(el);
+      });
+    }
 
-        lbHead.innerHTML = '<tr><th class="py-2 pr-4">Manager</th>' +
-          dateKeys.map((dk,i)=>`<th class="py-2 pr-4">Day ${i+1}<br><span class="text-xs text-gray-400">${dk}</span></th>`).join('') +
-          '<th class="py-2 pr-4">Total</th></tr>';
-
-        const managerSet = new Set();
-        const pointsByManager = new Map();
-        for (const {id, data} of dayDocs){
-          const dk = id.split('_')[1];
-          (data.entries||[]).forEach(e => {
-            managerSet.add(e.mid);
-            if (!pointsByManager.has(e.mid)) pointsByManager.set(e.mid, { by: new Map(), total: 0 });
-            pointsByManager.get(e.mid).by.set(dk, Number(e.totalPoints||0));
-            pointsByManager.get(e.mid).total += Number(e.totalPoints||0);
-          });
-        }
-
-        const uids = Array.from(managerSet);
-        const nameMap = new Map();
-        await Promise.all(uids.map(async uid => {
-          try { const s = await getDoc(doc(db, 'users', uid)); nameMap.set(uid, s.exists() ? (s.data().name||uid) : uid); }
-          catch { nameMap.set(uid, uid); }
-        }));
-
-        let rows = uids.map(uid => {
-          const rec = pointsByManager.get(uid) || { by: new Map(), total: 0 };
-          const cells = dateKeys.map(dk => (rec.by.get(dk)||0));
-          return { name: nameMap.get(uid)||uid, cells, total: rec.total };
-        });
-
-        if (lbSort.value.startsWith('total_')){
-          rows.sort((a,b)=> lbSort.value==='total_desc' ? b.total - a.total : a.total - b.total);
-        }
-
-        dateKeys.forEach((dk,i)=>{
-          const chip = document.createElement('span');
-          chip.className = 'px-3 py-1 rounded-full chip text-xs';
-          chip.textContent = `Day ${i+1} – ${dk}`;
-          lbDates.appendChild(chip);
-        });
-
-        rows.forEach(r => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td class="py-2 pr-4 font-medium">${r.name}</td>` +
-            r.cells.map(v=>`<td class="py-2 pr-4">${Number(v||0).toFixed(2)}</td>`).join('') +
-            `<td class="py-2 pr-4 font-semibold">${Number(r.total||0).toFixed(2)}</td>`;
-          lbRows.appendChild(tr);
-        });
-
-        lbStatus.textContent = `${rows.length} managers`;
-      }catch(err){
-        lbStatus.textContent = 'Error: ' + (err.message || err);
+    function buildDaySortMenu(dayCount){
+      daySortMenu.innerHTML='';
+      const any=document.createElement('div');
+      any.className='menu-item text-sm text-gray-200';
+      any.textContent='Total (all days)';
+      any.onclick=()=>{ sortByDayIndex=null; daySortLabel.textContent='Sort by Day'; renderFromCache(); daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false'); };
+      daySortMenu.appendChild(any);
+      for(let i=1;i<=dayCount;i++){
+        const item=document.createElement('div');
+        item.className='menu-item text-sm text-gray-200';
+        item.textContent=`Day ${i}`;
+        item.onclick=()=>{ sortByDayIndex=i; daySortLabel.textContent=`Day ${i}`; renderFromCache(); daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false'); };
+        daySortMenu.appendChild(item);
       }
+    }
+    daySortBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const open = daySortBox.classList.toggle('open');
+      daySortBtn.setAttribute('aria-expanded', String(open));
+    });
+    document.addEventListener('click', (e)=>{
+      if (!daySortBox.contains(e.target)){
+        daySortBox.classList.remove('open');
+        daySortBtn.setAttribute('aria-expanded','false');
+      }
+    });
+
+    const fmt = (n)=>Number(n||0).toFixed(2);
+    const trend = (prev, curr) => {
+      if (prev==null) return {icon:'→', cls:'trend-flat', delta:0};
+      const d = prev - curr;
+      if (d>0)  return {icon:'↑', cls:'trend-up', delta:d};
+      if (d<0)  return {icon:'↓', cls:'trend-down', delta:Math.abs(d)};
+      return {icon:'→', cls:'trend-flat', delta:0};
     };
+
+    /* ---------- Podium ---------- */
+    function renderPodium(rows){
+      podiumEl.innerHTML = '';
+      const [first, second, third] = [rows[0], rows[1], rows[2]];
+      if (!first) return;
+
+      const cards = [];
+      if (second) cards.push({r: second, place:2, pos:'second', medal:'medal-2'});
+      cards.push({r: first, place:1, pos:'first',  medal:'medal-1'});
+      if (third)  cards.push({r: third,  place:3, pos:'third',  medal:'medal-3'});
+
+      cards.forEach(({r,place,pos,medal})=>{
+        const details = Array.isArray(r._details) ? r._details : [];
+        const maxShown = 10;
+        const normalized = Array.from({length: Math.min(maxShown, details.length)}, (_,i)=> details[i] || {label:`Day ${i+1}`, points:0});
+        const left  = normalized.slice(0,5);
+        const right = normalized.slice(5,10);
+        const colHTML = arr => arr.map(d=>`
+          <div class="text-gray-300">${d.label}</div>
+          <div class="text-right font-semibold">${fmt(d.points)}</div>
+        `).join('');
+
+        const t = trend(prevRanks.get(r.uid), place);
+        const el = document.createElement('div');
+        el.className = `podium-card ${pos} flip-card`;
+        el.dataset.uid = r.uid;
+        el.dataset.key = r.uid;
+        el.innerHTML = `
+          <div class="flip-inner card rounded-2xl p-4 text-center">
+            <div class="flip-face front">
+              <div class="inline-flex items-center gap-2 mb-2 justify-center">
+                <span class="px-2 py-0.5 rounded rank-badge text-xs ${medal}">#${place}</span>
+                <span class="${t.cls} text-sm">${t.icon}${t.delta?` ${t.delta}`:''}</span>
+              </div>
+              <div class="text-lg font-bold">${r.name}</div>
+              <div class="text-2xl font-extrabold mt-1">${fmt(r.total)}</div>
+            </div>
+            <div class="flip-face back">
+              <div class="mini-columns">
+                <div class="mini-grid">${colHTML(left)}</div>
+                <div class="mini-grid">${colHTML(right)}</div>
+              </div>
+            </div>
+          </div>`;
+        podiumEl.appendChild(el);
+      });
+
+      podiumEl.querySelectorAll('.flip-card').forEach(el=>{
+        el.addEventListener('click', ()=> el.classList.toggle('flipped'));
+      });
+    }
+
+    /* ---------- List ---------- */
+    function flipAnimate(container, updater){
+      const first = new Map();
+      Array.from(container.children).forEach(el => first.set(el.dataset.key, el.getBoundingClientRect()));
+      updater();
+      Array.from(container.children).forEach(el=>{
+        const key = el.dataset.key;
+        const last = el.getBoundingClientRect();
+        const f = first.get(key);
+        if (!f) return;
+        const dx = f.left - last.left;
+        const dy = f.top  - last.top;
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+        el.style.opacity = '0.7';
+        requestAnimationFrame(()=>{
+          el.classList.add('flip-animate');
+          el.style.transform = '';
+          el.style.opacity = '1';
+          el.addEventListener('transitionend', ()=>el.classList.remove('flip-animate'), {once:true});
+        });
+      });
+    }
+
+    function renderList(rows, dayLabelsByUid){
+      flipAnimate(listEl, () => {
+        listEl.innerHTML = rows.slice(3).map((r,idx)=>{
+          const rank = idx + 4;
+          const prev = prevRanks.get(r.uid);
+          const t = trend(prev, rank);
+          const detailsRows = (dayLabelsByUid[r.uid]||[]).map(x=>`
+            <div class="grid grid-cols-2 text-xs py-0.5">
+              <div class="text-gray-300">${x.label}</div>
+              <div class="text-right font-semibold">${fmt(x.points)}</div>
+            </div>
+          `).join('');
+          return `
+            <li class="px-4 py-3 cursor-pointer" data-key="${r.uid}">
+              <div class="flex items-center gap-3">
+                <span class="w-10 shrink-0 text-right font-semibold tabular-nums">#${rank}</span>
+                <span class="${t.cls} w-8 shrink-0">${t.icon}${t.delta?` ${t.delta}`:''}</span>
+                <span class="flex-1 font-medium">${r.name}</span>
+                <span class="text-sm text-gray-300">Total</span>
+                <span class="w-24 text-right font-semibold">${fmt(r.total)}</span>
+              </div>
+              <div class="details mt-2 pl-10 pr-2">
+                <div class="border-t border-white/10 pt-2">
+                  ${detailsRows || '<div class="text-xs text-gray-400">No per-day scores for this phase.</div>'}
+                </div>
+              </div>
+            </li>
+          `;
+        }).join('');
+      });
+
+      listEl.querySelectorAll('li').forEach(li=>{
+        li.addEventListener('click', ()=> li.classList.toggle('row-open'));
+      });
+    }
+
+    /* ---------- Data shaping ---------- */
+    function rowsFromDayDocs(dayDocs){
+      const managerSet = new Set();
+      const pointsByManagerByDay = new Map();
+      const sorted = [...dayDocs].sort((a,b)=> a.id.localeCompare(b.id));
+      sorted.forEach(({data}, idx)=>{
+        (data.entries||[]).forEach(e=>{
+          const uid = e.mid;
+          managerSet.add(uid);
+          if (!pointsByManagerByDay.has(uid)) pointsByManagerByDay.set(uid, new Map());
+          pointsByManagerByDay.get(uid).set(idx+1, Number(e.totalPoints||0));
+        });
+      });
+      return { managerSet, pointsByManagerByDay, dayCount: sorted.length };
+    }
+
+    function phaseDaySet(tid){
+      const conf = window.phaseConfig[tid] || {};
+      if (!currentPhase) return null; // Overall
+      const def = conf[currentPhase];
+      return new Set(def || []);
+    }
+
+    async function nameMapFromUids(uids, fallbackMap={}){
+      const map = new Map();
+      await Promise.all(uids.map(async uid=>{
+        if (fallbackMap[uid]) { map.set(uid, fallbackMap[uid]); return; }
+        try{
+          const s = await getDoc(doc(db,'users',uid));
+          map.set(uid, s.exists() ? (s.data().name||uid) : uid);
+        }catch{
+          map.set(uid, uid);
+        }
+      }));
+      return map;
+    }
+
+    async function buildRows(dayDocs, fallbackNameMap={}, tid=currentTid){
+      const { managerSet, pointsByManagerByDay, dayCount } = rowsFromDayDocs(dayDocs);
+      buildDaySortMenu(dayCount);
+
+      // Include submitters (so zero-point managers still render)
+      (submitterRoster[tid] || new Set()).forEach(uid => managerSet.add(uid));
+
+      // Merge name fallbacks: rosterNameMap -> fallbackNameMap -> users/{uid}.name
+      const nameMap = await nameMapFromUids(Array.from(managerSet), { ...rosterNameMap[tid], ...fallbackNameMap });
+
+      const includeDays = phaseDaySet(tid);
+      const rows = Array.from(managerSet).map(uid=>{
+        const byDay = pointsByManagerByDay.get(uid) || new Map();
+        let total = 0; const details = [];
+        byDay.forEach((points, dayIdx)=>{
+          if (!includeDays || includeDays.has(dayIdx)){
+            total += points;
+            details.push({ label: `Day ${dayIdx}`, points });
+          }
+        });
+        const sortDayValue = sortByDayIndex ? (byDay.get(sortByDayIndex) || 0) : null;
+        return { uid, name: nameMap.get(uid)||uid, total, _details: details, sortDayValue };
+      });
+
+      rows.sort((a,b)=> sortByDayIndex ? (b.sortDayValue - a.sortDayValue) || (b.total - a.total) : (b.total - a.total));
+
+      const dayLabelsByUid = {}; rows.forEach(r=>{ dayLabelsByUid[r.uid] = r._details; });
+      return { rows, dayLabelsByUid, dayCount };
+    }
+
+    /* ---------- Watch submitters (flat 'lineups') ---------- */
+    function startWatchSubmitters(tid){
+      if (unwatchSubmitters) { unwatchSubmitters(); unwatchSubmitters = null; }
+      const q = query(collection(db, 'lineups'), where('tid','==', tid));
+      unwatchSubmitters = onSnapshot(q, (snap)=>{
+        const ids = new Set();
+        const names = {};
+        snap.forEach(d=>{
+          const v = d.data() || {};
+          // accept either ownerUid OR mid (your docs use `mid`)
+          const uid = v.ownerUid || v.mid;
+          if (!uid) return;
+          ids.add(uid);
+          if (v.managerName) names[uid] = v.managerName; // use provided name as fallback
+        });
+        submitterRoster[tid] = ids;
+        rosterNameMap[tid] = names;
+        renderFromCache(); // refresh immediately (0.00 totals until points arrive)
+      });
+    }
+
+    /* ---------- Loaders ---------- */
+    async function loadTi2025(){
+      if (unsubscribe) { unsubscribe(); unsubscribe=null; }
+      lbStatus.textContent = `Listening for TI 2025 — ${currentPhase || 'Overall'}…`;
+
+      // Watch submitters so empty days still show managers
+      startWatchSubmitters('ti2025');
+
+      const coll = collection(db,'leaderboards');
+      unsubscribe = onSnapshot(coll, async snaps=>{
+        const dayDocs=[]; snaps.forEach(d=>{ if(d.id.startsWith('ti2025_')) dayDocs.push({id:d.id, data:d.data()}); });
+        cachedDocs.ti2025=dayDocs; await renderFromCache();
+      });
+    }
+    async function loadTi2024(){
+      if (unsubscribe) { unsubscribe(); unsubscribe=null; }
+      lbStatus.textContent = `Loading TI 2024 — ${currentPhase || 'Overall'}…`;
+
+      startWatchSubmitters('ti2024'); // optional for last year
+
+      const snaps=await getDocs(collection(db,'leaderboards'));
+      let dayDocs=[]; snaps.forEach(d=>{ if(d.id.startsWith('ti2024_')) dayDocs.push({id:d.id, data:d.data()}); });
+      if(!dayDocs.length && Array.isArray(window.ti2024Seed)) dayDocs=window.ti2024Seed;
+      cachedDocs.ti2024=dayDocs; await renderFromCache();
+    }
+
+    /* ---------- Render ---------- */
+    async function renderFromCache(){
+      markYearPillActive(); buildInnerPhaseTabs();
+
+      const bundle=currentTid==='ti2024'?cachedDocs.ti2024:cachedDocs.ti2025;
+
+      // If no day docs yet, still show submitters with 0.00 (name fallback from managerName)
+      if(!bundle || !bundle.length){
+        const ids = Array.from(submitterRoster[currentTid] || []);
+        const fallback = { ...(rosterNameMap[currentTid]||{}), ...(currentTid==='ti2024'?(window.ti2024NameMap||{}):{}) };
+        const nameMap = await nameMapFromUids(ids, fallback);
+        const rows = ids.map(uid => ({ uid, name: nameMap.get(uid)||uid, total:0, _details:[] }));
+        rows.sort((a,b)=> b.total - a.total);
+
+        const nextRanks=new Map(); rows.forEach((r,i)=> nextRanks.set(r.uid,i+1));
+        renderPodium(rows);
+        const dl={}; rows.forEach(r=> dl[r.uid]=[]);
+        renderList(rows, dl);
+        lbStatus.textContent = `${rows.length} managers — ${currentTid.toUpperCase()} • ${currentPhase || 'Overall'}`;
+        prevRanks=nextRanks;
+        return;
+      }
+
+      const { rows, dayLabelsByUid } =
+        await buildRows(bundle, currentTid==='ti2024' ? (window.ti2024NameMap||{}) : {}, currentTid);
+
+      const nextRanks=new Map(); rows.forEach((r,i)=> nextRanks.set(r.uid,i+1));
+      renderPodium(rows); renderList(rows, dayLabelsByUid);
+      lbStatus.textContent = `${rows.length} managers — ${currentTid.toUpperCase()} • ${currentPhase||'Overall'}${sortByDayIndex?` • Sorted by Day ${sortByDayIndex}`:''}`;
+      prevRanks=nextRanks;
+    }
+
+    /* ---------- Switch year ---------- */
+    async function switchYear(toTid){
+      currentTid=toTid; prevRanks=new Map(); currentPhase=null; sortByDayIndex=null;
+      daySortLabel.textContent='Sort by Day'; daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false');
+      buildInnerPhaseTabs(); if(toTid==='ti2025') loadTi2025(); else loadTi2024();
+    }
+
+    pill2025.addEventListener('click', ()=>{ if(currentTid!=='ti2025') switchYear('ti2025'); });
+    pill2024.addEventListener('click', ()=>{ if(currentTid!=='ti2024') switchYear('ti2024'); });
+
+    // Boot on TI2025
+    switchYear('ti2025');
   </script>
 </body>
 </html>
