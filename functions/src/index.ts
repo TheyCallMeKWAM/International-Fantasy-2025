@@ -1,10 +1,10 @@
 /* International Fantasy 2025 — Cloud Functions (TypeScript, v2 API)
- * Locks at 3:00 AM EST (08:00 UTC). Override per tournament via tournaments/{tid}.lockHourUTC (UTC hour).
- * Polls OpenDota every 5 minutes, stores matches, and scores the day.
+ * Locks at 3:00 AM ET (08:00 UTC). Override per tournament via tournaments/{tid}.lockHourUTC (UTC hour).
+ * Polls OpenDota every 45 minutes, caches matches in Firestore, and scores only when a match becomes COMPLETE.
  */
 import admin from "firebase-admin";
 import { onCall, HttpsError, type CallableRequest } from "firebase-functions/v2/https";
-import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onSchedule, type ScheduledEvent } from "firebase-functions/v2/scheduler";
 
 // ---------- Admin init ----------
 const app = admin.apps.length ? admin.app() : admin.initializeApp();
@@ -17,7 +17,7 @@ type DateKey = string; // YYYYMMDD
 interface TournamentDoc {
   name?: string;
   leagueIds?: number[];
-  lockHourUTC?: number; // default 08:00 UTC (3am EST)
+  lockHourUTC?: number; // default 08:00 UTC (3am ET)
 }
 
 interface MatchDoc {
@@ -39,6 +39,7 @@ interface MatchDoc {
   dire_name?: string;
   tid: Tid;
   dateKey: DateKey;
+  complete?: boolean;
   updatedAt?: admin.firestore.FieldValue;
 }
 
@@ -46,7 +47,7 @@ interface LineupDoc {
   tid: Tid;
   dateKey: DateKey;
   ownerUid: string;
-  mid: string;
+  mid: string; // (legacy) user id key
   managerName?: string | null;
   captain: string;
   cores: string[];
@@ -56,7 +57,7 @@ interface LineupDoc {
   updatedAt?: admin.firestore.FieldValue;
 }
 
-interface LeaderboardEntry { mid: string; totalPoints: number; }
+interface LeaderboardEntry { mid: string; managerName?: string | null; totalPoints: number; }
 interface LeaderboardDoc { entries: LeaderboardEntry[]; }
 
 // ---------- Scoring config ----------
@@ -71,12 +72,13 @@ const SCORING = {
   captainMultiplier: 1.5,
 };
 
-// Default lock is 3:00 AM EST = 08:00 UTC
+// Default lock is 3:00 AM ET = 08:00 UTC
 const DEFAULT_LOCK_HOUR_UTC = 8;
 
 // ---------- Utils ----------
 const toInt = (v: unknown) => Number.parseInt(String(v ?? 0), 10) || 0;
-const yyyymmddFromUTC = (d: Date): DateKey => `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+const yyyymmddFromUTC = (d: Date): DateKey =>
+  `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
 
 async function getTournament(tid: Tid): Promise<{ leagueIds: number[]; lockHourUTC: number; name: string }> {
   const snap = await db.collection("tournaments").doc(tid).get();
@@ -167,9 +169,22 @@ async function fetchJSON(url: string): Promise<any> {
 const fetchLeagueMatches = (id: number) => fetchJSON(`https://api.opendota.com/api/leagues/${id}/matches`);
 const fetchMatchDetail   = (id: number) => fetchJSON(`https://api.opendota.com/api/matches/${id}`);
 
+// ---------- Cache helpers ----------
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+function looksComplete(m: any): boolean {
+  if (!m) return false;
+  const hasPlayers = Array.isArray(m.players) && m.players.length === 10;
+  const hasDuration = toInt(m.duration) > 0;
+  // OpenDota sometimes omits objectives but players/duration suffice for fantasy stats
+  return !!(hasPlayers && hasDuration);
+}
+
 async function upsertMatchDoc(tid: Tid, match: any) {
   const date = new Date(toInt(match.start_time || match.startTime) * 1000);
   const dateKey = yyyymmddFromUTC(date);
+  const complete = looksComplete(match);
+
   const doc: MatchDoc = {
     match_id: toInt(match.match_id ?? match.matchId),
     series_id: toInt(match.series_id ?? match.seriesId),
@@ -188,10 +203,12 @@ async function upsertMatchDoc(tid: Tid, match: any) {
     radiant_name: match.radiant_name || "",
     dire_name: match.dire_name || "",
     tid, dateKey,
+    complete,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+
   await db.collection("matches").doc(String(doc.match_id)).set(doc, { merge: true });
-  return { dateKey, match_id: doc.match_id };
+  return { dateKey, match_id: doc.match_id, complete };
 }
 
 // ---------- Scoring ----------
@@ -221,6 +238,7 @@ function scoreTeamCardInMatch(teamId: string | number, m: any): number {
   if ((side && m.radiant_win) || (!side && !m.radiant_win)) pts += SCORING.team.teamWin;
   return pts;
 }
+
 function addSweepBonuses(lineup: LineupDoc, matches: any[]) {
   const series = seriesWinsForDay(matches);
   const teamId = lineup.teamCard ? toInt(lineup.teamCard) : null;
@@ -237,7 +255,9 @@ function addSweepBonuses(lineup: LineupDoc, matches: any[]) {
     if (w.radiant.wins >= 2 && w.dire.wins === 0) sweepTeamId = w.radiant.team_id;
     if (w.dire.wins >= 2 && w.radiant.wins === 0) sweepTeamId = w.dire.team_id;
     if (!sweepTeamId) continue;
+
     if (teamId && toInt(teamId) === toInt(sweepTeamId)) teamSweep += SCORING.team.sweep;
+
     for (const pid of [lineup.captain, ...(lineup.cores || []), ...(lineup.supports || [])].map(String)) {
       const playedSweep = pack.some((m: any) => {
         const row = summarizePlayers(m).get(pid); if (!row) return false;
@@ -249,13 +269,15 @@ function addSweepBonuses(lineup: LineupDoc, matches: any[]) {
   }
   return { playerSweeps, teamSweep };
 }
+
 async function scoreDay(tid: Tid, dateKey: DateKey) {
   const mSnap = await db.collection("matches").where("tid", "==", tid).where("dateKey", "==", dateKey).get();
   const matches: any[] = []; mSnap.forEach((d: any) => matches.push(d.data()));
+
   const lSnap = await db.collection("lineups").where("tid", "==", tid).where("dateKey", "==", dateKey).get();
   const lineups: (LineupDoc & { id: string })[] = []; lSnap.forEach((d: any) => lineups.push({ id: d.id, ...(d.data() as LineupDoc) }));
-  const entries: LeaderboardEntry[] = [];
 
+  const entries: LeaderboardEntry[] = [];
   for (const L of lineups) {
     const cap = String(L.captain || "");
     const cores = Array.isArray(L.cores) ? L.cores.map(String) : [];
@@ -270,7 +292,11 @@ async function scoreDay(tid: Tid, dateKey: DateKey) {
     let teamPts = 0; for (const m of matches) teamPts += scoreTeamCardInMatch(teamCard, m); teamPts += teamSweep;
 
     const total = capPts * (SCORING.captainMultiplier || 1) + corePts + supPts + teamPts;
-    entries.push({ mid: L.ownerUid || L.mid || "unknown", totalPoints: Number(total.toFixed(2)) });
+    entries.push({
+      mid: L.ownerUid || L.mid || "unknown",
+      managerName: L.managerName ?? null, // 👈 include display name right on the leaderboard
+      totalPoints: Number(total.toFixed(2))
+    });
   }
 
   const lbId = `${tid}_${dateKey}`;
@@ -282,11 +308,13 @@ async function scoreDay(tid: Tid, dateKey: DateKey) {
 export const submitLineup = onCall(async (request: CallableRequest) => {
   const auth = request.auth; if (!auth) throw new HttpsError("unauthenticated", "Sign in first.");
   const uid = auth.uid!;
-  const { tid, dateKey, captain, cores, supports, teamCard, managerName } = (request.data || {}) as Partial<LineupDoc> & { tid: Tid; dateKey: DateKey };
+  const { tid, dateKey, captain, cores, supports, teamCard, managerName } =
+    (request.data || {}) as Partial<LineupDoc> & { tid: Tid; dateKey: DateKey };
   if (!tid || !/^\d{8}$/.test(String(dateKey || ""))) throw new HttpsError("invalid-argument", "Missing tid/dateKey.");
 
   const t = await getTournament(tid);
-  if (Date.now() >= lockTimestamp(String(dateKey), t.lockHourUTC)) throw new HttpsError("failed-precondition", "Lineups for this day are locked.");
+  if (Date.now() >= lockTimestamp(String(dateKey), t.lockHourUTC))
+    throw new HttpsError("failed-precondition", "Lineups for this day are locked.");
 
   const docId = `${tid}_${dateKey}_${uid}`;
   const payload: LineupDoc = {
@@ -311,7 +339,8 @@ function assertAdmin(auth: any) {
 export const adminGetLineup = onCall(async (request: CallableRequest) => {
   assertAdmin(request.auth);
   const { tid, dateKey, user } = request.data as { tid: Tid; dateKey: DateKey; user: string };
-  if (!tid || !/^\d{8}$/.test(String(dateKey || "")) || !user) throw new HttpsError("invalid-argument", "Provide tid, dateKey, user.");
+  if (!tid || !/^\d{8}$/.test(String(dateKey || "")) || !user)
+    throw new HttpsError("invalid-argument", "Provide tid, dateKey, user.");
 
   let uid: string | null = null, email: string | null = null;
   if (String(user).includes("@")) { try { const rec = await admin.auth().getUserByEmail(String(user)); uid = rec.uid; email = rec.email || null; } catch {} }
@@ -322,12 +351,9 @@ export const adminGetLineup = onCall(async (request: CallableRequest) => {
   const s = await db.collection("lineups").doc(docId).get();
   const L: Partial<LineupDoc> = s.exists ? (s.data() as Partial<LineupDoc>) : {};
   const t = await getTournament(tid);
-  const locked = Date.now() >= lockTimestamp(String(dateKey), t.lockHourUTC) || !!L.locked;
+  const locked = Date.now() >= lockTimestamp(String(dateKey), t.lockHourUTC) || !!(L.locked);
 
-  return {
-    uid, email, locked,
-    captain: L.captain || "", cores: L.cores || [], supports: L.supports || [], teamCard: L.teamCard || ""
-  };
+  return { uid, email, locked, captain: L.captain || "", cores: L.cores || [], supports: L.supports || [], teamCard: L.teamCard || "" };
 });
 
 export const adminSetLineup = onCall(async (request: CallableRequest) => {
@@ -335,7 +361,8 @@ export const adminSetLineup = onCall(async (request: CallableRequest) => {
   const { tid, dateKey, uid, captain, cores, supports, teamCard, overrideLock } =
     request.data as { tid: Tid; dateKey: DateKey; uid: string; captain: string; cores: string[]; supports: string[]; teamCard: string; overrideLock?: boolean; };
 
-  if (!tid || !/^\d{8}$/.test(String(dateKey || "")) || !uid) throw new HttpsError("invalid-argument", "Provide tid, dateKey, uid.");
+  if (!tid || !/^\d{8}$/.test(String(dateKey || "")) || !uid)
+    throw new HttpsError("invalid-argument", "Provide tid, dateKey, uid.");
 
   const t = await getTournament(tid);
   const nowLocked = Date.now() >= lockTimestamp(String(dateKey), t.lockHourUTC);
@@ -358,7 +385,8 @@ export const adminSetLineup = onCall(async (request: CallableRequest) => {
 export const adminRescoreDay = onCall(async (request: CallableRequest) => {
   assertAdmin(request.auth);
   const { tid, dateKey } = request.data as { tid: Tid; dateKey: DateKey };
-  if (!tid || !/^\d{8}$/.test(String(dateKey || ""))) throw new HttpsError("invalid-argument", "Provide tid/dateKey.");
+  if (!tid || !/^\d{8}$/.test(String(dateKey || "")))
+    throw new HttpsError("invalid-argument", "Provide tid/dateKey.");
   const out = await scoreDay(tid, String(dateKey));
   return { ok: true, count: out.count };
 });
@@ -366,36 +394,87 @@ export const adminRescoreDay = onCall(async (request: CallableRequest) => {
 export const adminExportScores = onCall(async (request: CallableRequest) => {
   assertAdmin(request.auth);
   const { tid, dateKey } = request.data as { tid: Tid; dateKey: DateKey };
-  if (!tid || !/^\d{8}$/.test(String(dateKey || ""))) throw new HttpsError("invalid-argument", "Provide tid/dateKey.");
+  if (!tid || !/^\d{8}$/.test(String(dateKey || "")))
+    throw new HttpsError("invalid-argument", "Provide tid/dateKey.");
   const id = `${tid}_${dateKey}`;
   const s = await db.collection("leaderboards").doc(id).get();
   const d = (s.exists ? (s.data() as LeaderboardDoc) : { entries: [] }) as LeaderboardDoc;
   return d;
 });
 
-// ---------- Scheduler (v2) ----------
-export const pollOpenDota = onSchedule({ schedule: "every 5 minutes" }, async () => {
-  const tids: Tid[] = ["ti2025"]; // add more if needed
+// ---------- Scheduler (v2) with caching & scoring-on-complete ----------
+export const pollOpenDota = onSchedule({ schedule: "every 45 minutes" }, async (_evt: ScheduledEvent): Promise<void> => {
+  const tids: Tid[] = ["ti2025"]; // add more tournaments if needed
+  const completedDatesByTid = new Map<Tid, Set<DateKey>>();
+
   for (const tid of tids) {
     const t = await getTournament(tid);
     const leagues = t.leagueIds || [];
-    const seen = new Set<number>();
+    if (!leagues.length) continue;
+
     for (const lid of leagues) {
       let list: any[] = [];
-      try { list = await fetchLeagueMatches(lid); }
-      catch (err: any) { console.error("league list", lid, err?.message || err); continue; }
+      try {
+        list = await fetchLeagueMatches(lid);
+      } catch (err: any) {
+        console.error("league list error", { tid, lid, err: err?.message || err });
+        continue;
+      }
 
-      for (const row of list || []) {
-        const matchId = row.match_id || row.matchId;
-        if (!matchId || seen.has(matchId)) continue;
-        seen.add(matchId);
+      // newest first
+      list.sort((a, b) => toInt(b.start_time) - toInt(a.start_time));
+
+      for (const row of list) {
+        const matchId = toInt(row.match_id || row.matchId);
+        if (!matchId) continue;
+
+        const ref = db.collection("matches").doc(String(matchId));
+        const snap = await ref.get();
+
+        // if we already have a complete match, skip
+        if (snap.exists) {
+          const existing = snap.data() as Partial<MatchDoc>;
+          if (existing?.complete === true || looksComplete(existing)) continue;
+
+          // if very recent start, skip re-pull to avoid half-filled data
+          const startSec = toInt(existing?.start_time || row.start_time);
+          if (Date.now() - startSec * 1000 < 15 * 60 * 1000) continue;
+        } else {
+          // if we don't have any doc and it's extremely fresh, skip for now
+          const startSec = toInt(row.start_time);
+          if (Date.now() - startSec * 1000 < 10 * 60 * 1000) continue;
+        }
+
+        // polite throttle for OpenDota
+        await sleep(800);
+
         try {
+          // Fetch detail once; Firestore is our cache
           const det = await fetchMatchDetail(matchId);
-          const { dateKey } = await upsertMatchDoc(tid, det);
-          await scoreDay(tid, dateKey);
-        } catch (err: any) { console.error("match", matchId, err?.message || err); }
+          const beforeComplete = snap.exists ? !!(snap.data() as any)?.complete : false;
+
+          const { dateKey, complete } = await upsertMatchDoc(tid, det);
+
+          // If this fetch made the record "complete", track date for scoring
+          if (complete && !beforeComplete) {
+            if (!completedDatesByTid.has(tid)) completedDatesByTid.set(tid, new Set<DateKey>());
+            completedDatesByTid.get(tid)!.add(dateKey);
+          }
+        } catch (err: any) {
+          console.error("match detail error", { tid, matchId, err: err?.message || err });
+        }
       }
     }
   }
-  // no return (must be void/Promise<void>)
+
+  // Score only days that had newly completed matches this run
+  for (const [tid, dateSet] of completedDatesByTid.entries()) {
+    for (const dateKey of dateSet) {
+      try {
+        await scoreDay(tid, dateKey);
+      } catch (err: any) {
+        console.error("scoreDay error", { tid, dateKey, err: err?.message || err });
+      }
+    }
+  }
 });

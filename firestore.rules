@@ -1,48 +1,27 @@
-// firestore.rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
-    function isAdmin() { return signedIn() && request.auth.token.admin == true; }
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin()    { return request.auth != null && request.auth.token.admin == true; }
 
-    // ---- Users: private (public UI doesn't need these)
-    match /users/{uid} {
-      allow read, create, update: if isSelf(uid);
-      allow delete: if false; // or isAdmin()
-    }
-
-    // ---- Leaderboards: public read, admin write
-    match /leaderboards/{doc} {
+    // Public leaderboard
+    match /leaderboards/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // ---- Players & Teams: public read, admin manage (for your admin UI)
-    match /players/{doc} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-    match /teams/{doc} {
-      allow read: if true;
-      allow write: if isAdmin();
+    // Signed-in reads elsewhere
+    match /tournaments/{tid} { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    match /players/{pid}     { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    match /teams/{tid}       { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    match /matches/{mid}     { allow read: if isSignedIn(); allow write: if isAdmin(); }
+
+    // Lineups: owner or admin
+    match /lineups/{id} {
+      allow read:  if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.ownerUid);
+      allow write: if isAdmin() || (isSignedIn() && request.auth.uid == request.resource.data.ownerUid);
     }
 
-    // ---- Lineups (flat collection):
-    // Doc id format: <tid>_<dateKey>_<uid>
-    // - Public read but ONLY for allowed tournaments (so roster can render)
-    // - Owner or admin can create/update
-    // - Only admin can delete
-    match /lineups/{docId} {
-      // PUBLIC READ for specific events (adjust the list as needed)
-      allow read: if resource.data.tid in ['ti2025', 'ti2024'];
-
-      // OWNER or ADMIN may create/update
-      allow create, update: if isAdmin() ||
-                            (signedIn() && docId.matches('^[^_]+_[^_]+_' + request.auth.uid + '$'));
-
-      // Delete only by admin (prevents users from erasing history)
-      allow delete: if isAdmin();
-    }
+    match /{document=**} { allow read, write: if false; }
   }
 }

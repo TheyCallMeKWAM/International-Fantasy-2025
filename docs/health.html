@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- source:  -->
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>IF2025 • Health</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --bg-url: url("./international_2025_ls_3_4k.jpg"); }
+    body{
+      min-height:100vh; color:#e6e8eb;
+      background:
+        linear-gradient(180deg, rgba(14,16,20,.78), rgba(14,16,20,.78)),
+        var(--bg-url) center/cover fixed no-repeat;
+    }
+    .card{ background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); border-radius:16px; backdrop-filter:blur(12px); box-shadow:0 18px 50px rgba(0,0,0,.45); }
+    table{ width:100%; border-collapse:collapse; }
+    th,td{ padding:.5rem .6rem; border-bottom:1px solid rgba(255,255,255,.08); font-size:.9rem; }
+    th{ text-align:left; color:#cbd5e1; font-weight:600; }
+    .pill{ padding:.18rem .5rem; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.15); }
+    .muted{ color:#9aa3af; }
+  </style>
+</head>
+<body>
+  <header class="max-w-5xl mx-auto px-4 pt-8 pb-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-extrabold">International Fantasy 2025 — Health</h1>
+      <p class="muted text-sm mt-1">Read-only dashboard from Firestore cache.</p>
+    </div>
+    <div id="who" class="text-sm text-gray-200"></div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 pb-16">
+    <section class="card p-4 md:p-6 mb-6">
+      <div class="grid md:grid-cols-3 gap-4">
+        <div>
+          <div class="muted text-xs uppercase tracking-wide">Current (ET)</div>
+          <div id="nowEt" class="text-lg font-semibold">--</div>
+        </div>
+        <div>
+          <div class="muted text-xs uppercase tracking-wide">Next Lock (3:00 AM ET)</div>
+          <div id="nextLockEt" class="text-lg font-semibold">--</div>
+        </div>
+        <div>
+          <div class="muted text-xs uppercase tracking-wide">Active dateKey</div>
+          <div id="dateKey" class="text-lg font-semibold">--</div>
+        </div>
+      </div>
+
+      <div class="mt-4 flex items-center gap-3">
+        <button id="btnRefresh" class="px-3 py-1.5 rounded bg-indigo-500 hover:bg-indigo-600 text-white text-sm" disabled>Refresh now</button>
+        <span class="muted text-sm">Auto-refresh every 60s</span>
+        <span class="muted text-sm ml-auto">Last updated: <span id="lastUpdated">--</span></span>
+      </div>
+
+      <div id="authGate" class="muted text-xs mt-2">Sign in to view data…</div>
+    </section>
+
+    <section class="grid md:grid-cols-3 gap-6 mb-6">
+      <div class="card p-4">
+        <div class="muted text-xs uppercase tracking-wide mb-2">Matches Today (ti2025)</div>
+        <div class="text-3xl font-extrabold"><span id="matchesTotal">0</span></div>
+        <div class="mt-2 text-sm">
+          <span class="pill">Completed: <span id="matchesComplete">0</span></span>
+          <span class="pill ml-2">Incomplete: <span id="matchesIncomplete">0</span></span>
+        </div>
+      </div>
+
+      <div class="card p-4">
+        <div class="muted text-xs uppercase tracking-wide mb-2">Lineups Today</div>
+        <div class="text-3xl font-extrabold"><span id="lineupsTotal">0</span></div>
+        <div class="mt-2 text-sm muted">Using the dateKey above</div>
+      </div>
+
+      <div class="card p-4">
+        <div class="muted text-xs uppercase tracking-wide mb-2">Leaderboard Doc</div>
+        <div class="text-3xl font-extrabold"><span id="lbStatus">missing</span></div>
+        <div class="mt-2 text-sm">
+          <span class="pill">Entries: <span id="lbEntries">0</span></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card p-4 md:p-6">
+      <div class="flex items-center mb-3">
+        <h2 class="text-lg font-bold">Recent completed matches (today)</h2>
+        <span id="recentCount" class="pill ml-2">0</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Match ID</th>
+              <th>Radiant</th>
+              <th>Dire</th>
+              <th>Winner</th>
+              <th>Duration</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="recentTable">
+            <tr><td colspan="6" class="muted">No data yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+    import { getFirestore, getDocs, getDoc, collection, query, where, doc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+    import { setupAuthUI } from "./assets/auth-ui.js"; // same auth widget as admin.html
+
+    // --- Firebase app (same config as other pages)
+    const app = initializeApp({
+      apiKey:"AIzaSyAx8jWSAZdR_rzgVP8XumxNOvsy86bjl-Q",
+      authDomain:"internationalfantasy2025.firebaseapp.com",
+      projectId:"internationalfantasy2025",
+      storageBucket:"internationalfantasy2025.firebasestorage.app",
+      messagingSenderId:"864977028555",
+      appId:"1:864977028555:web:8038b630cba08cc661624e"
+    });
+
+    // Reuse the shared auth UI header just like admin.html
+    const { auth, db } = setupAuthUI({ app, headerEl: document.getElementById('who'), cardClass: 'card' });
+
+    const CURRENT_TID = "ti2025";
+    const TZ = "America/New_York";
+
+    // ---------- ET helpers ----------
+    function etParts(d = new Date()){
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: TZ, hour12: false,
+        year:'numeric', month:'2-digit', day:'2-digit',
+        hour:'2-digit', minute:'2-digit', second:'2-digit',
+        timeZoneName: 'shortOffset'
+      }).formatToParts(d).reduce((acc,p)=>{ acc[p.type]=p.value; return acc; }, {});
+      const [y,m,day,h,mi,s] = [parts.year,parts.month,parts.day,parts.hour,parts.minute,parts.second].map(v=>parseInt(v,10));
+      const offRaw = String(parts.timeZoneName||'GMT-4');
+      const mOff = offRaw.match(/([+-]\d{1,2})(?::?(\d{2}))?$/);
+      const hh = String(Math.abs(parseInt(mOff?.[1]||'-4',10))).padStart(2,'0');
+      const sign = (mOff?.[1]||'-4').startsWith('-') ? '-' : '+';
+      const mm = mOff?.[2] ? mOff[2] : '00';
+      const offset = `${sign}${hh}:${mm}`;
+      return { y,m,day,h,mi,s, offset };
+    }
+    function etDateToJS(y,m,day,h=0,mi=0,s=0, offset='+00:00'){
+      const iso = `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}T${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(s).padStart(2,'0')}${offset}`;
+      return new Date(iso);
+    }
+    function nextLockET(){
+      const {y,m,day,offset} = etParts();
+      const lockToday = etDateToJS(y,m,day,3,0,0, offset); // 3:00 AM ET
+      const now = new Date();
+      if (now < lockToday) return lockToday;
+      const tomorrow = new Date(etDateToJS(y,m,day,12,0,0, offset).getTime() + 24*3600*1000);
+      const p = etParts(tomorrow);
+      return etDateToJS(p.y,p.m,p.day,3,0,0,p.offset);
+    }
+    function currentDateKeyET(){
+      const next = nextLockET();
+      const p = etParts(new Date(next.getTime() - 1));
+      return `${p.y}${String(p.m).padStart(2,'0')}${String(p.day).padStart(2,'0')}`;
+    }
+    function fmtDur(sec){ if(!sec || sec<=0) return "-"; const m = Math.floor(sec/60), s = sec%60; return `${m}m ${String(s).padStart(2,'0')}s`; }
+    function fmtDate(d){ if(!d) return "-"; const dt = d?.toDate ? d.toDate() : new Date(d); return new Intl.DateTimeFormat('en-US', { dateStyle:'medium', timeStyle:'short' }).format(dt); }
+
+    // ---------- UI refs ----------
+    const nowEtEl = document.getElementById('nowEt');
+    const nextLockEl = document.getElementById('nextLockEt');
+    const dateKeyEl = document.getElementById('dateKey');
+    const lastUpdatedEl = document.getElementById('lastUpdated');
+    const btnRefresh = document.getElementById('btnRefresh');
+    const authGate = document.getElementById('authGate');
+
+    const matchesTotalEl = document.getElementById('matchesTotal');
+    const matchesCompleteEl = document.getElementById('matchesComplete');
+    const matchesIncompleteEl = document.getElementById('matchesIncomplete');
+
+    const lineupsTotalEl = document.getElementById('lineupsTotal');
+    const lbStatusEl = document.getElementById('lbStatus');
+    const lbEntriesEl = document.getElementById('lbEntries');
+
+    const recentCountEl = document.getElementById('recentCount');
+    const recentTableEl = document.getElementById('recentTable');
+
+    function tickClock(){
+      const p = etParts();
+      nowEtEl.textContent = `${String(p.h).padStart(2,'0')}:${String(p.mi).padStart(2,'0')}:${String(p.s).padStart(2,'0')} ET`;
+      const nl = nextLockET();
+      nextLockEl.textContent = nl.toLocaleString('en-US', { timeZone: TZ, hour:'numeric', minute:'2-digit', month:'short', day:'2-digit' });
+      dateKeyEl.textContent = currentDateKeyET();
+    }
+    setInterval(tickClock, 500); tickClock();
+
+    async function refresh(){
+      const dk = currentDateKeyET();
+
+      // Matches today
+      const mSnap = await getDocs(query(
+        collection(db,'matches'),
+        where('tid','==',CURRENT_TID),
+        where('dateKey','==',dk)
+      ));
+      let total=0, complete=0, incomplete=0;
+      const rows=[];
+      mSnap.forEach(docSnap=>{
+        const m = docSnap.data(); total++;
+        if (m.complete) complete++; else incomplete++;
+        rows.push(m);
+      });
+      matchesTotalEl.textContent = total;
+      matchesCompleteEl.textContent = complete;
+      matchesIncompleteEl.textContent = incomplete;
+
+      // Recent completed
+      rows.sort((a,b)=>{
+        const ta = (a.updatedAt?.seconds||0) || a.start_time || 0;
+        const tb = (b.updatedAt?.seconds||0) || b.start_time || 0;
+        return tb - ta;
+      });
+      const completedRows = rows.filter(r=>r.complete).slice(0,10);
+      recentCountEl.textContent = String(completedRows.length);
+      recentTableEl.innerHTML = completedRows.length ? "" : `<tr><td colspan="6" class="muted">No completed matches yet.</td></tr>`;
+      for (const m of completedRows){
+        const winner = m.radiant_win ? 'Radiant' : 'Dire';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${m.match_id}</td>
+          <td>${m.radiant_name||m.radiant_team_id||'-'}</td>
+          <td>${m.dire_name||m.dire_team_id||'-'}</td>
+          <td>${winner}</td>
+          <td>${fmtDur(m.duration)}</td>
+          <td>${fmtDate(m.updatedAt)}</td>
+        `;
+        recentTableEl.appendChild(tr);
+      }
+
+      // Lineups today
+      const lSnap = await getDocs(query(
+        collection(db,'lineups'),
+        where('tid','==',CURRENT_TID),
+        where('dateKey','==',dk)
+      ));
+      let lcount=0; lSnap.forEach(()=>lcount++);
+      lineupsTotalEl.textContent = lcount;
+
+      // Leaderboard today
+      const lbId = `${CURRENT_TID}_${dk}`;
+      const lbSnap = await getDoc(doc(db,'leaderboards', lbId));
+      if (lbSnap.exists()){
+        const d = lbSnap.data();
+        lbStatusEl.textContent = 'present';
+        lbEntriesEl.textContent = Array.isArray(d.entries) ? d.entries.length : 0;
+      } else {
+        lbStatusEl.textContent = 'missing';
+        lbEntriesEl.textContent = '0';
+      }
+
+      lastUpdatedEl.textContent = new Date().toLocaleString();
+    }
+
+    // Gate all reads behind a sign-in (same pattern as admin.html)
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        authGate.textContent = 'Sign in to view data…';
+        btnRefresh.disabled = true;
+        return;
+      }
+      authGate.textContent = `Signed in as ${user.email || user.uid}`;
+      btnRefresh.disabled = false;
+      btnRefresh.onclick = refresh;
+
+      // initial load + auto-refresh
+      await refresh();
+      setInterval(refresh, 60_000);
+    });
+  </script>
+</body>
+</html>
