@@ -20,6 +20,28 @@ interface TournamentDoc {
   lockHourUTC?: number; // default 08:00 UTC (3am ET)
 }
 
+// Slim player/objective shapes — only what we score on.
+interface PlayerSlim {
+  account_id: number;
+  player_slot: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  last_hits: number;
+  denies: number;
+  obs_placed: number;
+  camps_stacked: number;
+  roshans_killed?: number;
+  roshan_kills?: number;
+}
+
+type ObjectiveType = "CHAT_MESSAGE_ROSHAN_KILL" | "CHAT_MESSAGE_FIRST_BLOOD";
+interface ObjectiveSlim {
+  type: ObjectiveType;
+  player_slot: number;
+  time?: number;
+}
+
 interface MatchDoc {
   match_id: number;
   series_id: number;
@@ -32,8 +54,8 @@ interface MatchDoc {
   tower_status_dire: number;
   barracks_status_radiant: number;
   barracks_status_dire: number;
-  objectives: any[];
-  players: any[];
+  objectives: ObjectiveSlim[];   // SLIM
+  players: PlayerSlim[];         // SLIM
   start_time: number;
   radiant_name?: string;
   dire_name?: string;
@@ -57,7 +79,14 @@ interface LineupDoc {
   updatedAt?: admin.firestore.FieldValue;
 }
 
-interface LeaderboardEntry { mid: string; managerName?: string | null; totalPoints: number; }
+/** NEW: Roster breakdown for leaderboard */
+type RosterItem =
+  | { role: "Captain"; steam32: string; points: number }
+  | { role: "Core";    steam32: string; points: number }
+  | { role: "Support"; steam32: string; points: number }
+  | { role: "Team";    teamId: string;  name?: string; points: number };
+
+interface LeaderboardEntry { mid: string; managerName?: string | null; totalPoints: number; roster: RosterItem[]; }
 interface LeaderboardDoc { entries: LeaderboardEntry[]; }
 
 // ---------- Scoring config ----------
@@ -66,7 +95,7 @@ const SCORING = {
     kill: 3, assist: 2, death: -1,
     lastHits: 0.02, denies: 0.02,
     wardsPlaced: 0.2, campsStacked: 0.5,
-    winUnder25: 15, kaOver20: 2, winGame: 15, sweep: 15,
+    winUnder25: 15, kaOver20: 2, winGame: 15, sweep: 30,
   },
   team: { towers: 1, barracks: 1, roshans: 3, firstBlood: 2, teamWin: 2, sweep: 15 },
   captainMultiplier: 1.5,
@@ -104,25 +133,40 @@ const barracksDestroyedByDire    = (m: any) => 6 - bitCount(m.barracks_status_ra
 
 function roshansByTeam(m: any) {
   const out = { radiant: 0, dire: 0 };
-  const objs: any[] = Array.isArray(m.objectives) ? m.objectives : [];
+
+  const objs: any[] = Array.isArray(m?.objectives) ? m.objectives : [];
+  let sawObjective = false;
   for (const o of objs) {
     if (o?.type === "CHAT_MESSAGE_ROSHAN_KILL") {
-      const slot = toInt(o.player_slot);
+      const slot = toInt(o?.player_slot);
       if (slot < 128) out.radiant += 1;
       else out.dire += 1;
+      sawObjective = true;
+    }
+  }
+  if (sawObjective) return out;
+
+  const players: any[] = Array.isArray(m?.players) ? m.players : [];
+  for (const p of players) {
+    const rk = toInt(p?.roshans_killed ?? p?.roshan_kills ?? 0);
+    if (rk > 0) {
+      const slot = toInt(p?.player_slot);
+      if (slot < 128) out.radiant += rk;
+      else out.dire += rk;
     }
   }
   return out;
 }
+
 function firstBloodTeam(m: any): "radiant" | "dire" | null {
-  const objs: any[] = Array.isArray(m.objectives) ? m.objectives : [];
+  const objs: ObjectiveSlim[] = Array.isArray(m.objectives) ? m.objectives : [];
   const fb = objs.find(o => o?.type === "CHAT_MESSAGE_FIRST_BLOOD");
   if (!fb) return null;
   return toInt(fb.player_slot) < 128 ? "radiant" : "dire";
 }
 
 function summarizePlayers(m: any) {
-  const arr: any[] = Array.isArray(m.players) ? m.players : [];
+  const arr: PlayerSlim[] = Array.isArray(m.players) ? m.players : [];
   const map = new Map<string, any>();
   for (const p of arr) {
     const id = String(p?.account_id ?? "");
@@ -132,6 +176,7 @@ function summarizePlayers(m: any) {
       kills: toInt(p.kills), deaths: toInt(p.deaths), assists: toInt(p.assists),
       last_hits: toInt(p.last_hits), denies: toInt(p.denies),
       obs_placed: toInt(p.obs_placed), camps_stacked: toInt(p.camps_stacked),
+      roshans_killed: toInt((p as any).roshans_killed ?? (p as any).roshan_kills ?? 0),
       player_slot: toInt(p.player_slot), isRadiant: toInt(p.player_slot) < 128,
     });
   }
@@ -180,12 +225,36 @@ function looksComplete(m: any): boolean {
   return !!(hasPlayers && hasDuration);
 }
 
-async function upsertMatchDoc(tid: Tid, match: any) {
-  const date = new Date(toInt(match.start_time || match.startTime) * 1000);
-  const dateKey = yyyymmddFromUTC(date);
-  const complete = looksComplete(match);
+// NEW: Project OpenDota match -> slim shape (only what we score on)
+function toSlimMatch(tid: Tid, match: any): MatchDoc {
+  const startSecs = toInt(match.start_time ?? match.startTime);
+  const dateKey = yyyymmddFromUTC(new Date(startSecs * 1000));
 
-  const doc: MatchDoc = {
+  const objectives: ObjectiveSlim[] = Array.isArray(match.objectives)
+    ? match.objectives
+        .filter((o: any) => o && (o.type === "CHAT_MESSAGE_ROSHAN_KILL" || o.type === "CHAT_MESSAGE_FIRST_BLOOD"))
+        .map((o: any) => ({
+          type: o.type as ObjectiveType,
+          player_slot: toInt(o.player_slot),
+          time: toInt(o.time),
+        }))
+    : [];
+
+  const players: PlayerSlim[] = Array.isArray(match.players)
+    ? match.players.map((p: any) => ({
+        account_id: toInt(p.account_id),
+        player_slot: toInt(p.player_slot),
+        kills: toInt(p.kills),
+        deaths: toInt(p.deaths),
+        assists: toInt(p.assists),
+        last_hits: toInt(p.last_hits),
+        denies: toInt(p.denies),
+        obs_placed: toInt(p.obs_placed),
+        camps_stacked: toInt(p.camps_stacked),
+      }))
+    : [];
+
+  return {
     match_id: toInt(match.match_id ?? match.matchId),
     series_id: toInt(match.series_id ?? match.seriesId),
     series_type: toInt(match.series_type ?? match.seriesType),
@@ -197,18 +266,23 @@ async function upsertMatchDoc(tid: Tid, match: any) {
     tower_status_dire: toInt(match.tower_status_dire),
     barracks_status_radiant: toInt(match.barracks_status_radiant),
     barracks_status_dire: toInt(match.barracks_status_dire),
-    objectives: Array.isArray(match.objectives) ? match.objectives : [],
-    players: Array.isArray(match.players) ? match.players : [],
-    start_time: toInt(match.start_time),
-    radiant_name: match.radiant_name || "",
-    dire_name: match.dire_name || "",
-    tid, dateKey,
-    complete,
+    objectives,
+    players,
+    start_time: startSecs,
+    radiant_name: String(match.radiant_name || ""),
+    dire_name: String(match.dire_name || ""),
+    tid,
+    dateKey,
+    complete: looksComplete({ players, duration: toInt(match.duration) }),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+}
 
+// EDITED: Upsert uses slim projection
+async function upsertMatchDoc(tid: Tid, match: any) {
+  const doc = toSlimMatch(tid, match);
   await db.collection("matches").doc(String(doc.match_id)).set(doc, { merge: true });
-  return { dateKey, match_id: doc.match_id, complete };
+  return { dateKey: doc.dateKey, match_id: doc.match_id, complete: !!doc.complete };
 }
 
 // ---------- Scoring ----------
@@ -235,6 +309,7 @@ function scoreTeamCardInMatch(teamId: string | number, m: any): number {
   pts += (side ? ros.radiant : ros.dire) * SCORING.team.roshans;
   const fb = firstBloodTeam(m);
   if ((fb === "radiant" && side) || (fb === "dire" && !side)) pts += SCORING.team.firstBlood;
+  if ((side && m.radiant_win) || (!side && !m.dire_win)) /* m.dire_win not in slim; use !radiant_win */ { /* noop */ }
   if ((side && m.radiant_win) || (!side && !m.radiant_win)) pts += SCORING.team.teamWin;
   return pts;
 }
@@ -270,9 +345,30 @@ function addSweepBonuses(lineup: LineupDoc, matches: any[]) {
   return { playerSweeps, teamSweep };
 }
 
+/** NEW: resolve pretty team name from teams/{teamId} */
+async function resolveTeamPrettyName(teamId: string): Promise<string | undefined> {
+  try {
+    const snap = await db.collection("teams").doc(teamId).get();
+    if (!snap.exists) return undefined;
+    const d = snap.data() || {};
+    const name = d.name || d.displayName || d.tag;
+    return typeof name === "string" && name.trim() ? String(name) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// EDITED: read only completed matches to reduce memory
 async function scoreDay(tid: Tid, dateKey: DateKey) {
-  const mSnap = await db.collection("matches").where("tid", "==", tid).where("dateKey", "==", dateKey).get();
-  const matches: any[] = []; mSnap.forEach((d: any) => matches.push(d.data()));
+  const mSnap = await db
+    .collection("matches")
+    .where("tid", "==", tid)
+    .where("dateKey", "==", dateKey)
+    .where("complete", "==", true)
+    .get();
+
+  const matches: any[] = [];
+  mSnap.forEach((d: any) => matches.push(d.data()));
 
   const lSnap = await db.collection("lineups").where("tid", "==", tid).where("dateKey", "==", dateKey).get();
   const lineups: (LineupDoc & { id: string })[] = []; lSnap.forEach((d: any) => lineups.push({ id: d.id, ...(d.data() as LineupDoc) }));
@@ -282,22 +378,45 @@ async function scoreDay(tid: Tid, dateKey: DateKey) {
     const cap = String(L.captain || "");
     const cores = Array.isArray(L.cores) ? L.cores.map(String) : [];
     const sups  = Array.isArray(L.supports) ? L.supports.map(String) : [];
-    const teamCard = L.teamCard;
+    const teamCard = String(L.teamCard || "");
 
     const { playerSweeps, teamSweep } = addSweepBonuses(L, matches);
 
-    let capPts = 0; for (const m of matches) capPts += scorePlayerInMatch(cap, m); capPts += playerSweeps.get(cap) || 0;
-    let corePts = 0; for (const pid of cores) { for (const m of matches) corePts += scorePlayerInMatch(pid, m); corePts += playerSweeps.get(String(pid)) || 0; }
-    let supPts  = 0; for (const pid of sups)  { for (const m of matches) supPts  += scorePlayerInMatch(pid, m); supPts  += playerSweeps.get(String(pid)) || 0; }
-    let teamPts = 0; for (const m of matches) teamPts += scoreTeamCardInMatch(teamCard, m); teamPts += teamSweep;
+    // per-slot raw points across matches
+    const capRaw = matches.reduce((sum, m) => sum + scorePlayerInMatch(cap, m), 0) + (playerSweeps.get(cap) || 0);
+    const coreRaw: number[] = cores.map(pid =>
+      matches.reduce((sum, m) => sum + scorePlayerInMatch(pid, m), 0) + (playerSweeps.get(String(pid)) || 0)
+    );
+    const supRaw: number[] = sups.map(pid =>
+      matches.reduce((sum, m) => sum + scorePlayerInMatch(pid, m), 0) + (playerSweeps.get(String(pid)) || 0)
+    );
+    const teamRaw = matches.reduce((sum, m) => sum + scoreTeamCardInMatch(teamCard, m), 0) + teamSweep;
 
-    const total = capPts * (SCORING.captainMultiplier || 1) + corePts + supPts + teamPts;
+    // apply captain multiplier to captain slot only
+    const capPts = capRaw * (SCORING.captainMultiplier || 1);
+
+    // Build roster breakdown in fixed order (Captain → Cores → Supports → Team)
+    const roster: RosterItem[] = [];
+    roster.push({ role: "Captain", steam32: cap, points: Number(capPts.toFixed(2)) });
+    cores.forEach((pid, i) => roster.push({ role: "Core", steam32: pid, points: Number(coreRaw[i].toFixed(2)) }));
+    sups.forEach((pid, i)  => roster.push({ role: "Support", steam32: pid, points: Number(supRaw[i].toFixed(2)) }));
+    if (teamCard) {
+      const pretty = await resolveTeamPrettyName(teamCard);
+      roster.push({ role: "Team", teamId: teamCard, name: pretty, points: Number(teamRaw.toFixed(2)) });
+    }
+
+    const total = roster.reduce((sum, r) => sum + (r.points || 0), 0);
+
     entries.push({
       mid: L.ownerUid || L.mid || "unknown",
-      managerName: L.managerName ?? null, // 👈 include display name right on the leaderboard
-      totalPoints: Number(total.toFixed(2))
+      managerName: L.managerName ?? null,
+      totalPoints: Number(total.toFixed(2)),
+      roster,
     });
   }
+
+  // sort & write
+  entries.sort((a, b) => b.totalPoints - a.totalPoints);
 
   const lbId = `${tid}_${dateKey}`;
   await db.collection("leaderboards").doc(lbId).set({ entries } as LeaderboardDoc, { merge: true });
@@ -478,3 +597,25 @@ export const pollOpenDota = onSchedule({ schedule: "every 45 minutes" }, async (
     }
   }
 });
+
+// ---------- Scheduled cleanup: purge match docs older than 2 days ----------
+export const purgeOldMatches = onSchedule(
+  { schedule: "every day 03:05", timeZone: "America/Toronto" },
+  async (): Promise<void> => {
+    // Compute UTC dateKey for (today - 2 days)
+    const now = new Date();
+    const cutoffUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 2, 0, 0, 0);
+    const cutoffKey = yyyymmddFromUTC(new Date(cutoffUTC));
+
+    // dateKey is YYYYMMDD so string comparison works for <
+    const snap = await db.collection("matches").where("dateKey", "<", cutoffKey).limit(500).get();
+
+    if (snap.empty) return;
+
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+
+    console.log(`purgeOldMatches: deleted ${snap.size} matches older than ${cutoffKey}`);
+  }
+);

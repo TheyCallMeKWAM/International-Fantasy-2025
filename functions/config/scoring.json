@@ -10,7 +10,7 @@
     "winUnder25": 15,
     "kaOver20": 2,
     "winGame": 15,
-    "sweep": 15
+    "sweep": 30
   },
   "team": {
     "towers": 1,

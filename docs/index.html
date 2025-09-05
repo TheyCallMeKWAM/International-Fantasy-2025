@@ -1,7 +1,6 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <!-- Styles/structure consistent with your earlier pages. :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3} -->
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>International Fantasy</title>
@@ -64,21 +63,26 @@
       align-items:center; justify-content:center; gap:.6rem; padding:1rem;
       transition: transform .45s cubic-bezier(.2,.7,.2,1), opacity .3s ease;
       transform: rotateY(0); opacity:1;
+      backface-visibility: hidden;
     }
-    .flip-face.back{
+    .flip-face.back{ overflow-y:auto; max-height:260px; 
       transform: rotateY(180deg);
       opacity:0;
       justify-content:center; align-items:center;
       overflow:hidden; padding:1rem;
     }
     .flipped .flip-face.front{ transform: rotateY(180deg); opacity:0; pointer-events:none; }
-    .flipped .flip-face.back{  transform: rotateY(0);    opacity:1; pointer-events:auto; }
+    .flipped .flip-face.back{ overflow-y:auto; max-height:260px;   transform: rotateY(0);    opacity:1; pointer-events:auto; }
 
     .mini-columns{
       width:100%; max-width:560px;
       display:grid; grid-template-columns: 1fr 1fr; gap:22px;
       align-items:start;
     }
+
+    .flip-face.back::-webkit-scrollbar{ width:8px; }
+    .flip-face.back::-webkit-scrollbar-thumb{ background: rgba(148,163,184,.7); border-radius: 6px; }
+
     .mini-grid{ display:grid; grid-template-columns: 1fr auto; column-gap:18px; row-gap:.35rem; font-size:.95rem; }
 
     .popover{ position:relative; }
@@ -95,14 +99,18 @@
     .popover.open .popover-menu{ display:block; }
     .menu-item{ padding: .5rem .65rem; border-radius: 8px; cursor: pointer; white-space: nowrap; }
     .menu-item:hover{ background: rgba(99,102,241,.25); }
+
+    .roster-grid{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap:.35rem .75rem; }
+    .roster-grid div{ font-size:.9rem; }
   </style>
 
   <script>
-    // Phase groupings you’re using
+    // Phase groupings
     window.phaseConfig = {
       ti2024: { "Group Stage":[1,2,3,4], "Event Playoffs":[5,6,7], "Main Event":[8,9,10] },
-      ti2025: { "Group Stage & Special Eliminator":[1,2,3,4], "Playoffs":[5,6,7,8] }
+      ti2025: { "Today":[], "Group Stage & Special Eliminator":[1,2,3,4], "Playoffs":[5,6,7,8] }
     };
+    window.defaultLockHourLocal = null; // optional default lock hour
   </script>
 </head>
 <body>
@@ -123,7 +131,9 @@
     <section class="card rounded-2xl p-4 md:p-6">
       <div id="lbStatus" class="text-sm text-gray-300 mb-4"></div>
 
+      <!-- Control row: Today first, then phase chips, then day dropdown -->
       <div class="flex flex-wrap items-center gap-2 mb-4">
+        <span id="todayChip" class="px-3 py-1 rounded-full chip chip-btn text-sm">Today</span>
         <div id="phaseTabsInner" class="flex flex-wrap gap-2"></div>
 
         <div id="daySortBox" class="popover ml-auto">
@@ -149,7 +159,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
     import { getFirestore, collection, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
-    import { setupAuthUI } from "./assets/auth-ui.js"; /* header UI only, no protected reads. :contentReference[oaicite:4]{index=4} */
+    import { setupAuthUI } from "./assets/auth-ui.js";
 
     // Firebase
     const app = initializeApp({
@@ -166,6 +176,7 @@
     const pill2025 = document.getElementById('pill-2025');
     const pill2024 = document.getElementById('pill-2024');
     const phaseTabsInner = document.getElementById('phaseTabsInner');
+    const todayChip = document.getElementById('todayChip');
     const lbStatus = document.getElementById('lbStatus');
     const podiumEl = document.getElementById('podium');
     const listEl   = document.getElementById('lbList');
@@ -178,11 +189,94 @@
     let currentTid = 'ti2025';
     let currentPhase = null;
     let prevRanks = new Map();
-    let unsub = null;
     let cache = { ti2024: null, ti2025: null };
     let sortByDayIndex = null;
+    let todayMode = false;
+    let unsub = null;
 
-    // UI helpers
+    // Baseline storage
+    function baseKey(dayIdx){
+      return [currentTid, (currentPhase||'__overall'), (dayIdx!=null?('day'+dayIdx):'total')].join('|');
+    }
+    function loadBaseline(dayIdx){
+      try{
+        const raw = localStorage.getItem('if_baseline_'+baseKey(dayIdx));
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        if (!obj || !obj.ranks) return null;
+        return new Map(Object.entries(obj.ranks).map(([k,v])=>[k, Number(v)]));
+      }catch{ return null; }
+    }
+    function saveBaseline(dayIdx, ranksMap){
+      const payload = { when: new Date().toISOString(), ranks: Object.fromEntries(ranksMap) };
+      try{ localStorage.setItem('if_baseline_'+baseKey(dayIdx), JSON.stringify(payload)); }catch{}
+    }
+    function ensureBaseline(dayIdx, ranksMap){
+      if (!loadBaseline(dayIdx)) saveBaseline(dayIdx, ranksMap);
+    }
+    function docLockTime(data){
+      const cands = [data?.lockAt, data?.lockedAt, data?.lock, data?.meta?.lockAt, data?.meta?.lockedAt].filter(Boolean);
+      for (const c of cands){
+        const t = Date.parse(c);
+        if (!Number.isNaN(t)) return t;
+      }
+      return null;
+    }
+
+    // Directory caches
+    // playersDir: Map(steam32 -> playerName)
+    const playersDir = new Map();
+    // lineupsByDayKey: { [dateKey]: { byMid: Map(mid->entry), byManager: Map(lowerName->entry) } }
+    const lineupsByDayKey = {};
+
+    // Load players directory
+    async function loadPlayers(){
+      playersDir.clear();
+      try{
+        const snaps = await getDocs(collection(db,'players'));
+        snaps.forEach(d=>{
+          const p = d.data() || {};
+          const id = p.steam32 ?? p.id32 ?? p.sid32 ?? p.steamId32 ?? p.id;
+          const name = p.name ?? p.player_name ?? p.player ?? p.tag ?? p.nickname;
+          if (id!=null && name) playersDir.set(String(id), String(name));
+        });
+      }catch(e){
+        // ignore if players collection doesn't exist
+      }
+    }
+
+    // Load lineups with schema per screenshot
+    async function loadLineups(tid){
+      for (const k of Object.keys(lineupsByDayKey)) delete lineupsByDayKey[k];
+      try{
+        const snaps = await getDocs(collection(db,'lineups'));
+        snaps.forEach(d=>{
+          const data = d.data() || {};
+          if (data.tid && data.tid !== tid) return;
+          const dateKey = data.dateKey || (typeof d.id==='string' && (d.id.match(/(\d{8})/)||[])[1]) || null;
+          if (!dateKey) return;
+          if (!lineupsByDayKey[dateKey]) lineupsByDayKey[dateKey] = { byMid:new Map(), byManager:new Map() };
+
+          const mid = (data.mid || data.ownerUid || '').toString();
+          const mname = (data.managerName || data.manager || '').toString().trim().toLowerCase();
+          const entry = {
+            dateKey,
+            mid,
+            managerLower: mname,
+            captain: data.captain,      // steam32 (string/number)
+            cores: Array.isArray(data.cores)? data.cores : [],
+            supports: Array.isArray(data.supports)? data.supports : [],
+            teamCard: data.teamCard || data.team || null
+          };
+          if (mid) lineupsByDayKey[dateKey].byMid.set(mid, entry);
+          if (mname) lineupsByDayKey[dateKey].byManager.set(mname, entry);
+        });
+      }catch(e){
+        console.warn('lineups load failed', e);
+      }
+    }
+
+    // Helpers
     function markYearPillActive(){
       pill2025.classList.toggle('active', currentTid==='ti2025');
       pill2024.classList.toggle('active', currentTid==='ti2024');
@@ -190,7 +284,7 @@
     function buildInnerPhaseTabs(){
       phaseTabsInner.innerHTML = '';
       const conf = window.phaseConfig[currentTid] || {};
-      const phases = Object.keys(conf);
+      const phases = Object.keys(conf).filter(k=>k!=='Today'); // Today is its own chip
       if (currentPhase && !phases.includes(currentPhase)) currentPhase = null;
       phases.forEach(phase=>{
         const el = document.createElement('span');
@@ -208,13 +302,13 @@
       const any=document.createElement('div');
       any.className='menu-item text-sm text-gray-200';
       any.textContent='Total (all days)';
-      any.onclick=()=>{ sortByDayIndex=null; daySortLabel.textContent='Sort by Day'; renderFromCache(); daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false'); };
+      any.onclick=()=>{ sortByDayIndex=null; todayMode=false; daySortLabel.textContent='Sort by Day'; todayChip.classList.remove('active'); renderFromCache(); daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false'); };
       daySortMenu.appendChild(any);
       for(let i=1;i<=dayCount;i++){
         const item=document.createElement('div');
         item.className='menu-item text-sm text-gray-200';
         item.textContent=`Day ${i}`;
-        item.onclick=()=>{ sortByDayIndex=i; daySortLabel.textContent=`Day ${i}`; renderFromCache(); daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false'); };
+        item.onclick=()=>{ sortByDayIndex=i; todayMode=false; daySortLabel.textContent=`Day ${i}`; todayChip.classList.remove('active'); renderFromCache(); daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false'); };
         daySortMenu.appendChild(item);
       }
     }
@@ -231,7 +325,7 @@
     });
 
     const fmt = (n)=>Number(n||0).toFixed(2);
-    const trend = (prev, curr) => {
+    const trendIcon = (prev, curr) => {
       if (prev==null) return {icon:'→', cls:'trend-flat', delta:0};
       const d = prev - curr;
       if (d>0)  return {icon:'↑', cls:'trend-up', delta:d};
@@ -239,8 +333,221 @@
       return {icon:'→', cls:'trend-flat', delta:0};
     };
 
-    /* ---------- Podium ---------- */
-    function renderPodium(rows){
+    /* ---------- Roster rendering ---------- */
+    // Convert leaderboard entry roster -> display list with names & points
+    function rosterFromLeaderboardEntry(roster){
+      if (!Array.isArray(roster)) return null;
+      const out = [];
+      let coreIdx = 0, supIdx = 0;
+      for (const item of roster){
+        if (!item || !item.role) continue;
+        if (item.role === 'Captain'){
+          const nm = nameFromSteam(item.steam32) || String(item.steam32||'');
+          out.push({ role: 'Captain', name: nm, points: Number(item.points||0) });
+        } else if (item.role === 'Core'){
+          coreIdx += 1;
+          const nm = nameFromSteam(item.steam32) || String(item.steam32||'');
+          out.push({ role: `Core ${coreIdx}`, name: nm, points: Number(item.points||0) });
+        } else if (item.role === 'Support'){
+          supIdx += 1;
+          const nm = nameFromSteam(item.steam32) || String(item.steam32||'');
+          out.push({ role: `Support ${supIdx}`, name: nm, points: Number(item.points||0) });
+        } else if (item.role === 'Team'){
+          const nm = item.name || item.teamId || 'Team';
+          out.push({ role: 'Team', name: nm, points: Number(item.points||0) });
+        }
+      }
+      return out.length ? out : null;
+    }
+    
+    function nameFromSteam(steam32){
+      if (steam32==null) return null;
+      const nm = playersDir.get(String(steam32));
+      return nm || null;
+    }
+    function normalizeRosterFromLineup(lineup){
+      if (!lineup) return null;
+      const out = [];
+      if (lineup.captain!=null){
+        out.push({ role:'Captain', name: nameFromSteam(lineup.captain) || String(lineup.captain), points: 0 });
+      }
+      (lineup.cores||[]).forEach((sid,i)=>{
+        out.push({ role:`Core ${i+1}`, name: nameFromSteam(sid) || String(sid), points: 0 });
+      });
+      (lineup.supports||[]).forEach((sid,i)=>{
+        out.push({ role:`Support ${i+1}`, name: nameFromSteam(sid) || String(sid), points: 0 });
+      });
+      if (lineup.teamCard){
+        out.push({ role:'Team', name: lineup.teamCard, points: 0 });
+      }
+      return out.length ? out : null;
+    }
+    function rosterHTMLFromList(list){
+      if (!list) return '<div class="text-xs text-gray-400">No roster data for this day.</div>';
+      return `
+        <div class="space-y-1">
+          ${list.map(item=>`
+            <div class="grid grid-cols-3 items-center text-sm">
+              <div class="text-gray-400">${item.role}</div>
+              <div class="font-medium truncate">${item.name}</div>
+              <div class="text-right font-semibold">${fmt(item.points)}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    /* ---------- Leaderboard shaping ---------- */
+    // Keep per-day manager rows with uid = mid when available
+    function rowsFromDayDocs(dayDocs){
+      const managerSet = new Set();
+      const nameByUid  = new Map();
+      const nameByUidLower = new Map();
+      const pointsByManagerByDay = new Map();
+      const dateKeyByDayIndex = new Map();
+
+      const sorted = [...dayDocs].sort((a,b)=> a.id.localeCompare(b.id));
+      sorted.forEach(({id, data}, idx)=>{
+        const dayIdx = idx + 1;
+        const dayKey = data?.dateKey || (id.match(/(\d{8})/)||[])[1] || null;
+        if (dayKey) dateKeyByDayIndex.set(dayIdx, String(dayKey));
+
+        const entries = Array.isArray(data.entries) ? data.entries : [];
+        for (const e of entries) {
+          const uid = String(e.mid || e.managerName || e.manager || Math.random());
+          managerSet.add(uid);
+          const managerName = String(e.managerName || e.manager || uid);
+          if (!nameByUid.has(uid)){
+            nameByUid.set(uid, managerName);
+            nameByUidLower.set(uid, managerName.trim().toLowerCase());
+          }
+          if (!pointsByManagerByDay.has(uid)) pointsByManagerByDay.set(uid, new Map());
+          pointsByManagerByDay.get(uid).set(dayIdx, Number(e.totalPoints||0));
+        }
+      });
+      return { managerSet, nameByUid, nameByUidLower, pointsByManagerByDay, dayCount: sorted.length, dateKeyByDayIndex };
+    }
+
+    function phaseDaySet(tid){
+      const conf = window.phaseConfig[tid] || {};
+      if (!currentPhase || currentPhase==='Today') return null;
+      const def = conf[currentPhase];
+      return new Set(def || []);
+    }
+
+    
+    function buildRows(dayDocs, tid=currentTid){
+      const { managerSet, nameByUid, nameByUidLower, pointsByManagerByDay, dayCount, dateKeyByDayIndex } = rowsFromDayDocs(dayDocs);
+      buildDaySortMenu(dayCount);
+
+      const effectiveDayIndex = todayMode ? (dayCount || 1) : sortByDayIndex;
+      const includeDays = phaseDaySet(tid);
+
+      const rows = Array.from(managerSet).map(uid=>{
+        const byDay = pointsByManagerByDay.get(uid) || new Map();
+        let total = 0; const details = [];
+        byDay.forEach((points, dayIdx)=>{
+          if (!includeDays || includeDays.has(dayIdx)){
+            total += points;
+            details.push({ label: `Day ${dayIdx}`, points });
+          }
+        });
+        const sortDayValue = effectiveDayIndex ? (byDay.get(effectiveDayIndex) || 0) : null;
+        const name = nameByUid.get(uid) || uid;
+        const nameLower = nameByUidLower.get(uid) || String(name).toLowerCase();
+        return { uid, name, nameLower, total, _details: details, sortDayValue };
+      });
+
+      rows.sort((a,b)=> effectiveDayIndex ? (b.sortDayValue - a.sortDayValue) || (b.total - a.total) : (b.total - a.total));
+
+      const dayLabelsByUid = {}; rows.forEach(r=>{ dayLabelsByUid[r.uid] = r._details; });
+
+      const rosterByUid = {};
+      if (effectiveDayIndex){
+        const dayDoc = dayDocs[effectiveDayIndex-1] || null;
+        const entries = dayDoc && Array.isArray(dayDoc.data.entries) ? dayDoc.data.entries : [];
+        const map = new Map();
+        for (const e of entries){
+          const uid = String(e.mid || e.managerName || e.manager || '');
+          const disp = rosterFromLeaderboardEntry(e.roster);
+          if (uid && disp) map.set(uid, disp);
+        }
+        rows.forEach(r=>{
+          if (map.has(r.uid)){
+            rosterByUid[r.uid] = map.get(r.uid);
+          } else {
+            const dateKey = dateKeyByDayIndex.get(effectiveDayIndex) || null;
+            const idx = dateKey ? lineupsByDayKey[dateKey] : null;
+            let lineup = null;
+            if (idx){
+              lineup = idx.byMid.get(r.uid) || idx.byManager.get(r.nameLower) || null;
+            }
+            rosterByUid[r.uid] = normalizeRosterFromLineup(lineup);
+          }
+        });
+      }
+
+      return { rows, dayLabelsByUid, dayCount, effectiveDayIndex, rosterByUid };
+    }
+
+
+    /* ---------- Fetchers ---------- */
+    function docIsForTid(id, data, tid){
+      if (data && typeof data.tid === 'string') return data.tid === tid;
+      return id.toLowerCase().includes(tid.toLowerCase());
+    }
+
+    async function loadYear(tid){
+      if (unsub) { try{unsub();}catch{} unsub=null; }
+      lbStatus.textContent = `Listening for ${tid.toUpperCase()} — ${currentPhase || 'Overall'}…`;
+
+      // preload players + lineups
+      await loadPlayers();
+      await loadLineups(tid);
+
+      const coll = collection(db,'leaderboards');
+      unsub = onSnapshot(coll, snaps=>{
+        const dayDocs=[];
+        snaps.forEach(d=>{
+          const data = d.data() || {};
+          if (docIsForTid(d.id, data, tid)) dayDocs.push({id:d.id, data});
+        });
+        cache[tid]=dayDocs;
+        renderFromCache(true);
+      }, (err)=> console.warn('leaderboard watch error', err?.code || err));
+    }
+
+    /* ---------- Render ---------- */
+    function computeRanksMap(rows){
+      const m = new Map();
+      rows.forEach((r,i)=> m.set(r.uid, i+1));
+      return m;
+    }
+
+    function chooseBaseline(dayCount, effectiveDayIndex, bundle, rows){
+      let lockMillis = null;
+      if (effectiveDayIndex && bundle[effectiveDayIndex-1]){
+        lockMillis = docLockTime(bundle[effectiveDayIndex-1].data);
+      }
+      if (!lockMillis && effectiveDayIndex && window.defaultLockHourLocal!=null){
+        const now = new Date();
+        const synth = new Date(now.getFullYear(), now.getMonth(), now.getDate(), window.defaultLockHourLocal, 0, 0);
+        lockMillis = synth.getTime();
+      }
+      const ranksNow = computeRanksMap(rows);
+      const keyDay = (effectiveDayIndex || null);
+      let baseline = loadBaseline(keyDay);
+      const nowMs = Date.now();
+      const lockSatisfied = !effectiveDayIndex || !lockMillis || nowMs >= lockMillis;
+      if (!baseline && lockSatisfied){
+        ensureBaseline(keyDay, ranksNow);
+        baseline = loadBaseline(keyDay);
+      }
+      if (!baseline) baseline = ranksNow;
+      return baseline;
+    }
+
+    function renderPodium(rows, rosterByUid=null, effectiveDayIndex=null, baselineRanks=null){
       podiumEl.innerHTML = '';
       const [first, second, third] = [rows[0], rows[1], rows[2]];
       if (!first) return;
@@ -261,11 +568,22 @@
           <div class="text-right font-semibold">${fmt(d.points)}</div>
         `).join('');
 
-        const t = trend(prevRanks.get(r.uid), place);
+        const t = trendIcon(baselineRanks?.get(r.uid), place);
         const el = document.createElement('div');
         el.className = `podium-card ${pos} flip-card`;
         el.dataset.uid = r.uid;
         el.dataset.key = r.uid;
+
+        const backInner = effectiveDayIndex
+          ? `<div class="w-full max-w-sm mx-auto">
+               <div class="text-xs text-gray-400 mb-2 text-center">Day ${effectiveDayIndex} Drafted Team</div>
+               ${rosterHTMLFromList(rosterByUid?.[r.uid] || null)}
+             </div>`
+          : `<div class="mini-columns">
+               <div class="mini-grid">${colHTML(left)}</div>
+               <div class="mini-grid">${colHTML(right)}</div>
+             </div>`;
+
         el.innerHTML = `
           <div class="flip-inner card rounded-2xl p-4 text-center">
             <div class="flip-face front">
@@ -277,10 +595,7 @@
               <div class="text-2xl font-extrabold mt-1">${fmt(r.total)}</div>
             </div>
             <div class="flip-face back">
-              <div class="mini-columns">
-                <div class="mini-grid">${colHTML(left)}</div>
-                <div class="mini-grid">${colHTML(right)}</div>
-              </div>
+              ${backInner}
             </div>
           </div>`;
         podiumEl.appendChild(el);
@@ -291,7 +606,6 @@
       });
     }
 
-    /* ---------- List ---------- */
     function flipAnimate(container, updater){
       const first = new Map();
       Array.from(container.children).forEach(el => first.set(el.dataset.key, el.getBoundingClientRect()));
@@ -314,26 +628,35 @@
       });
     }
 
-    function renderList(rows, dayLabelsByUid){
+    function renderList(rows, dayLabelsByUid, rosterByUid=null, effectiveDayIndex=null, baselineRanks=null){
       flipAnimate(listEl, () => {
         listEl.innerHTML = rows.slice(3).map((r,idx)=>{
           const rank = idx + 4;
-          const prev = prevRanks.get(r.uid);
-          const t = trend(prev, rank);
-          const detailsRows = (dayLabelsByUid[r.uid]||[]).map(x=>`
-            <div class="grid grid-cols-2 text-xs py-0.5">
-              <div class="text-gray-300">${x.label}</div>
-              <div class="text-right font-semibold">${fmt(x.points)}</div>
-            </div>
-          `).join('');
+          const t = trendIcon(baselineRanks?.get(r.uid), rank);
+
+          const detailsRows = effectiveDayIndex
+            ? `
+              <div class="text-xs text-gray-400 mb-1">Day ${effectiveDayIndex} Drafted Team</div>
+              ${rosterHTMLFromList(rosterByUid?.[r.uid] || null)}
+            `
+            : (dayLabelsByUid[r.uid]||[]).map(x=>`
+                <div class="grid grid-cols-2 text-xs py-0.5">
+                  <div class="text-gray-300">${x.label}</div>
+                  <div class="text-right font-semibold">${fmt(x.points)}</div>
+                </div>
+              `).join('');
+
+          const rightLabel = effectiveDayIndex ? `Day ${effectiveDayIndex}` : 'Total';
+          const rightValue = effectiveDayIndex ? fmt(r.sortDayValue||0) : fmt(r.total);
+
           return `
             <li class="px-4 py-3 cursor-pointer" data-key="${r.uid}">
               <div class="flex items-center gap-3">
                 <span class="w-10 shrink-0 text-right font-semibold tabular-nums">#${rank}</span>
                 <span class="${t.cls} w-8 shrink-0">${t.icon}${t.delta?` ${t.delta}`:''}</span>
                 <span class="flex-1 font-medium">${r.name}</span>
-                <span class="text-sm text-gray-300">Total</span>
-                <span class="w-24 text-right font-semibold">${fmt(r.total)}</span>
+                <span class="text-sm text-gray-300">${rightLabel}</span>
+                <span class="w-24 text-right font-semibold">${rightValue}</span>
               </div>
               <div class="details mt-2 pl-10 pr-2">
                 <div class="border-t border-white/10 pt-2">
@@ -350,86 +673,8 @@
       });
     }
 
-    /* ---------- Leaderboard shaping (public only) ---------- */
-    function rowsFromDayDocs(dayDocs){
-      const managerSet = new Set();
-      const nameByUid  = new Map();
-      const pointsByManagerByDay = new Map();
-
-      const sorted = [...dayDocs].sort((a,b)=> a.id.localeCompare(b.id));
-      sorted.forEach(({data}, idx)=>{
-        const dayIdx = idx + 1;
-        const entries = Array.isArray(data.entries) ? data.entries : [];
-        for (const e of entries) {
-          const uid = String(e.mid);
-          managerSet.add(uid);
-          if (e.managerName && !nameByUid.has(uid)) nameByUid.set(uid, String(e.managerName));
-          if (!pointsByManagerByDay.has(uid)) pointsByManagerByDay.set(uid, new Map());
-          pointsByManagerByDay.get(uid).set(dayIdx, Number(e.totalPoints||0));
-        }
-      });
-      return { managerSet, nameByUid, pointsByManagerByDay, dayCount: sorted.length };
-    }
-
-    function phaseDaySet(tid){
-      const conf = window.phaseConfig[tid] || {};
-      if (!currentPhase) return null;
-      const def = conf[currentPhase];
-      return new Set(def || []);
-    }
-
-    function buildRows(dayDocs, tid=currentTid){
-      const { managerSet, nameByUid, pointsByManagerByDay, dayCount } = rowsFromDayDocs(dayDocs);
-      buildDaySortMenu(dayCount);
-
-      const includeDays = phaseDaySet(tid);
-      const rows = Array.from(managerSet).map(uid=>{
-        const byDay = pointsByManagerByDay.get(uid) || new Map();
-        let total = 0; const details = [];
-        byDay.forEach((points, dayIdx)=>{
-          if (!includeDays || includeDays.has(dayIdx)){
-            total += points;
-            details.push({ label: `Day ${dayIdx}`, points });
-          }
-        });
-        const sortDayValue = sortByDayIndex ? (byDay.get(sortByDayIndex) || 0) : null;
-        const name = nameByUid.get(uid) || uid;
-        return { uid, name, total, _details: details, sortDayValue };
-      });
-
-      rows.sort((a,b)=> sortByDayIndex ? (b.sortDayValue - a.sortDayValue) || (b.total - a.total) : (b.total - a.total));
-
-      const dayLabelsByUid = {}; rows.forEach(r=>{ dayLabelsByUid[r.uid] = r._details; });
-      return { rows, dayLabelsByUid, dayCount };
-    }
-
-    /* ---------- Fetchers (leaderboards only) ---------- */
-    function docIsForTid(id, data, tid){
-      // Prefer explicit field; fallback to tolerant ID match
-      if (data && typeof data.tid === 'string') return data.tid === tid;
-      return id.toLowerCase().includes(tid.toLowerCase());
-    }
-
-    async function loadYear(tid){
-      if (unsub) { try{unsub();}catch{} unsub=null; }
-      lbStatus.textContent = `Listening for ${tid.toUpperCase()} — ${currentPhase || 'Overall'}…`;
-
-      const coll = collection(db,'leaderboards');
-      unsub = onSnapshot(coll, snaps=>{
-        const dayDocs=[];
-        snaps.forEach(d=>{
-          const data = d.data() || {};
-          if (docIsForTid(d.id, data, tid)) dayDocs.push({id:d.id, data});
-        });
-        cache[tid]=dayDocs;
-        renderFromCache();
-      }, (err)=> console.warn('leaderboard watch error', err?.code || err));
-    }
-
-    /* ---------- Render ---------- */
-    function renderFromCache(){
+    function renderFromCache(isSnapshot=false){
       markYearPillActive(); buildInnerPhaseTabs();
-
       const bundle=currentTid==='ti2024'?cache.ti2024:cache.ti2025;
 
       if(!bundle || !bundle.length){
@@ -439,25 +684,49 @@
         return;
       }
 
-      const { rows, dayLabelsByUid } = buildRows(bundle, currentTid);
+      const { rows, dayLabelsByUid, dayCount, effectiveDayIndex, rosterByUid } = buildRows(bundle, currentTid);
 
-      const nextRanks=new Map(); rows.forEach((r,i)=> nextRanks.set(r.uid,i+1));
-      renderPodium(rows); renderList(rows, dayLabelsByUid);
-      lbStatus.textContent = `${rows.length} managers — ${currentTid.toUpperCase()} • ${currentPhase||'Overall'}${sortByDayIndex?` • Sorted by Day ${sortByDayIndex}`:''}`;
-      prevRanks=nextRanks;
+      if (todayMode){
+        daySortLabel.textContent = `Day ${dayCount}`;
+        todayChip.classList.add('active');
+      } else if (!sortByDayIndex){
+        daySortLabel.textContent = 'Sort by Day';
+        todayChip.classList.remove('active');
+      } else {
+        daySortLabel.textContent = `Day ${sortByDayIndex}`;
+        todayChip.classList.remove('active');
+      }
+
+      const baselineRanks = chooseBaseline(dayCount, effectiveDayIndex, bundle, rows);
+
+      renderPodium(rows, rosterByUid, effectiveDayIndex, baselineRanks);
+      renderList(rows, dayLabelsByUid, rosterByUid, effectiveDayIndex, baselineRanks);
+
+      const statusSuffix = effectiveDayIndex?` • Sorted by Day ${effectiveDayIndex}`:'';
+      lbStatus.textContent = `${rows.length} managers — ${currentTid.toUpperCase()} • ${currentPhase||'Overall'}${statusSuffix}`;
+
+      prevRanks = new Map(); rows.forEach((r,i)=> prevRanks.set(r.uid,i+1));
     }
 
-    /* ---------- Switch year ---------- */
+    /* ---------- Interactions ---------- */
     function switchYear(toTid){
-      currentTid=toTid; prevRanks=new Map(); currentPhase=null; sortByDayIndex=null;
+      currentTid=toTid; prevRanks=new Map(); currentPhase=null; sortByDayIndex=null; todayMode=false;
       daySortLabel.textContent='Sort by Day'; daySortBox.classList.remove('open'); daySortBtn.setAttribute('aria-expanded','false');
       buildInnerPhaseTabs(); loadYear(toTid);
     }
-
     pill2025.addEventListener('click', ()=>{ if(currentTid!=='ti2025') switchYear('ti2025'); });
     pill2024.addEventListener('click', ()=>{ if(currentTid!=='ti2024') switchYear('ti2024'); });
 
-    // Boot on TI2025
+    todayChip.addEventListener('click', ()=>{
+      todayMode = !todayMode;
+      if (!todayMode){
+        sortByDayIndex = null;
+        daySortLabel.textContent = 'Sort by Day';
+      }
+      renderFromCache();
+    });
+
+    // Boot
     switchYear('ti2025');
   </script>
 </body>

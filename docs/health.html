@@ -20,6 +20,7 @@
     th{ text-align:left; color:#cbd5e1; font-weight:600; }
     .pill{ padding:.18rem .5rem; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.15); }
     .muted{ color:#9aa3af; }
+    .kbd{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:.8rem; padding:.15rem .35rem; border-radius:.375rem; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); }
   </style>
 </head>
 <body>
@@ -33,7 +34,7 @@
 
   <main class="max-w-5xl mx-auto px-4 pb-16">
     <section class="card p-4 md:p-6 mb-6">
-      <div class="grid md:grid-cols-3 gap-4">
+      <div class="grid md:grid-cols-3 gap-4 items-end">
         <div>
           <div class="muted text-xs uppercase tracking-wide">Current (ET)</div>
           <div id="nowEt" class="text-lg font-semibold">--</div>
@@ -44,7 +45,13 @@
         </div>
         <div>
           <div class="muted text-xs uppercase tracking-wide">Active dateKey</div>
-          <div id="dateKey" class="text-lg font-semibold">--</div>
+          <div class="flex items-center gap-2">
+            <input id="dateKeyInput"
+              class="text-lg font-semibold bg-transparent border border-gray-500 rounded px-2 py-1 w-36 tracking-wider"
+              value="--" placeholder="YYYYMMDD" inputmode="numeric" pattern="\d{8}"/>
+            <button id="btnUseToday" class="px-2 py-1 rounded bg-slate-600 hover:bg-slate-700 text-white text-xs">Use today</button>
+          </div>
+          <div class="muted text-xs mt-1">Press <span class="kbd">Enter</span> to refresh</div>
         </div>
       </div>
 
@@ -59,7 +66,7 @@
 
     <section class="grid md:grid-cols-3 gap-6 mb-6">
       <div class="card p-4">
-        <div class="muted text-xs uppercase tracking-wide mb-2">Matches Today (ti2025)</div>
+        <div class="muted text-xs uppercase tracking-wide mb-2">Matches <span id="matchesDayLabel">(selected day)</span> (ti2025)</div>
         <div class="text-3xl font-extrabold"><span id="matchesTotal">0</span></div>
         <div class="mt-2 text-sm">
           <span class="pill">Completed: <span id="matchesComplete">0</span></span>
@@ -68,9 +75,9 @@
       </div>
 
       <div class="card p-4">
-        <div class="muted text-xs uppercase tracking-wide mb-2">Lineups Today</div>
+        <div class="muted text-xs uppercase tracking-wide mb-2">Lineups (selected day)</div>
         <div class="text-3xl font-extrabold"><span id="lineupsTotal">0</span></div>
-        <div class="mt-2 text-sm muted">Using the dateKey above</div>
+        <div class="mt-2 text-sm muted">Using the active dateKey</div>
       </div>
 
       <div class="card p-4">
@@ -84,7 +91,7 @@
 
     <section class="card p-4 md:p-6">
       <div class="flex items-center mb-3">
-        <h2 class="text-lg font-bold">Recent completed matches (today)</h2>
+        <h2 class="text-lg font-bold">Recent completed matches</h2>
         <span id="recentCount" class="pill ml-2">0</span>
       </div>
       <div class="overflow-x-auto">
@@ -170,7 +177,8 @@
     // ---------- UI refs ----------
     const nowEtEl = document.getElementById('nowEt');
     const nextLockEl = document.getElementById('nextLockEt');
-    const dateKeyEl = document.getElementById('dateKey');
+    const dateKeyInput = document.getElementById('dateKeyInput');
+    const btnUseToday = document.getElementById('btnUseToday');
     const lastUpdatedEl = document.getElementById('lastUpdated');
     const btnRefresh = document.getElementById('btnRefresh');
     const authGate = document.getElementById('authGate');
@@ -178,6 +186,7 @@
     const matchesTotalEl = document.getElementById('matchesTotal');
     const matchesCompleteEl = document.getElementById('matchesComplete');
     const matchesIncompleteEl = document.getElementById('matchesIncomplete');
+    const matchesDayLabelEl = document.getElementById('matchesDayLabel');
 
     const lineupsTotalEl = document.getElementById('lineupsTotal');
     const lbStatusEl = document.getElementById('lbStatus');
@@ -186,19 +195,38 @@
     const recentCountEl = document.getElementById('recentCount');
     const recentTableEl = document.getElementById('recentTable');
 
+    function setDayLabel(dk){
+      matchesDayLabelEl.textContent = `(${dk})`;
+    }
+
     function tickClock(){
       const p = etParts();
       nowEtEl.textContent = `${String(p.h).padStart(2,'0')}:${String(p.mi).padStart(2,'0')}:${String(p.s).padStart(2,'0')} ET`;
       const nl = nextLockET();
       nextLockEl.textContent = nl.toLocaleString('en-US', { timeZone: TZ, hour:'numeric', minute:'2-digit', month:'short', day:'2-digit' });
-      dateKeyEl.textContent = currentDateKeyET();
+      // initialize the input if it's unset
+      if (dateKeyInput.dataset.initialized !== "1") {
+        const dk = localStorage.getItem('if25.health.dateKey') || currentDateKeyET();
+        dateKeyInput.value = dk;
+        setDayLabel(dk);
+        dateKeyInput.dataset.initialized = "1";
+      }
     }
     setInterval(tickClock, 500); tickClock();
 
-    async function refresh(){
-      const dk = currentDateKeyET();
+    function normalizeDk(raw){
+      const v = (raw||"").replace(/[^0-9]/g, "").slice(0,8);
+      if (v.length === 8) return v;
+      return currentDateKeyET();
+    }
 
-      // Matches today
+    async function refresh(){
+      const dk = normalizeDk(dateKeyInput.value);
+      dateKeyInput.value = dk; // normalize display
+      localStorage.setItem('if25.health.dateKey', dk);
+      setDayLabel(dk);
+
+      // Matches for selected day
       const mSnap = await getDocs(query(
         collection(db,'matches'),
         where('tid','==',CURRENT_TID),
@@ -238,7 +266,7 @@
         recentTableEl.appendChild(tr);
       }
 
-      // Lineups today
+      // Lineups for selected day
       const lSnap = await getDocs(query(
         collection(db,'lineups'),
         where('tid','==',CURRENT_TID),
@@ -247,7 +275,7 @@
       let lcount=0; lSnap.forEach(()=>lcount++);
       lineupsTotalEl.textContent = lcount;
 
-      // Leaderboard today
+      // Leaderboard for selected day
       const lbId = `${CURRENT_TID}_${dk}`;
       const lbSnap = await getDoc(doc(db,'leaderboards', lbId));
       if (lbSnap.exists()){
@@ -273,7 +301,15 @@
       btnRefresh.disabled = false;
       btnRefresh.onclick = refresh;
 
-      // initial load + auto-refresh
+      dateKeyInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') refresh();
+      });
+      btnUseToday.addEventListener('click', () => {
+        dateKeyInput.value = currentDateKeyET();
+        refresh();
+      });
+
+      // initial load + auto-refresh with the selected DK
       await refresh();
       setInterval(refresh, 60_000);
     });

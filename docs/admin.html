@@ -219,6 +219,92 @@
         .replace(/\s+/g, '_'); // "Yakutou Brothers" -> "yakutou_brothers"
     }
 
+    // === NEW helper getters for export transformation ===
+    function getAllLineups(data){
+      return data?.lineups || data?.snapshots?.lineups || data?.picks || [];
+    }
+    function getPlayerDirectory(data){
+      return data?.players || data?.playerIndex || {};
+    }
+    function getMatchesArray(data){
+      return data?.matches || data?.stats?.matches || data?.stats || [];
+    }
+
+    // === NEW: build the team → players → matches breakdown for selected players only ===
+    function buildTeamPlayerBreakdown(exportData){
+      const playersById = getPlayerDirectory(exportData);   // { [pid]: { name, orgName/teamName, teamKey? } }
+      const matches     = getMatchesArray(exportData);      // [{ matchId, players: { [pid]: {...} } }, ...]
+      const lineups     = getAllLineups(exportData);        // [{ captain, cores:[], supports:[], teamCard }, ...]
+
+      // 1) Collect set of all selected player ids
+      const selected = new Set();
+      for (const lu of lineups) {
+        if (!lu) continue;
+        const picks = [
+          lu.captain,
+          ...(lu.cores||[]),
+          ...(lu.supports||[])
+        ].filter(Boolean).map(String);
+        picks.forEach(p => selected.add(p));
+      }
+
+      // 2) Resolve player → team info
+      const normKey = (t) => String(t||'').trim().toLowerCase().replace(/\s+/g,'_');
+      function resolveTeamInfo(pid, statRow){
+        const pDir = playersById[pid] || {};
+        const name = pDir.name || statRow?.name || pid;
+        const org  = pDir.orgName || pDir.teamName || statRow?.orgName || statRow?.teamName || 'Unknown';
+        const tKey = pDir.teamKey || statRow?.teamKey || normKey(org);
+        return { name, org, tKey };
+      }
+
+      // 3) Accumulate per player across matches
+      const perPlayer = new Map(); // pid -> { name, org, tKey, pid, matches:[...], totalPoints:number }
+      for (const m of matches) {
+        const matchId = m?.matchId ?? m?.id ?? m?.match_id ?? '';
+        const pStats  = m?.players || m?.playerStats || m?.stats || {};
+        for (const [pidRaw, s] of Object.entries(pStats)) {
+          const pid = String(pidRaw);
+          if (!selected.has(pid)) continue;
+
+          const { name, org, tKey } = resolveTeamInfo(pid, s);
+          if (!perPlayer.has(pid)) perPlayer.set(pid, { name, org, tKey, pid, matches: [], totalPoints: 0 });
+
+          const kills   = Number(s?.kills ?? s?.k ?? 0);
+          const deaths  = Number(s?.deaths ?? s?.d ?? 0);
+          const assists = Number(s?.assists ?? s?.a ?? 0);
+          const points  = Number(s?.points ?? s?.fantasy ?? s?.score ?? 0);
+
+          perPlayer.get(pid).matches.push({ matchId, kills, deaths, assists, points });
+          perPlayer.get(pid).totalPoints += points;
+        }
+      }
+
+      // 4) Group by team/org name
+      const byTeam = new Map();
+      for (const p of perPlayer.values()) {
+        if (!byTeam.has(p.org)) byTeam.set(p.org, []);
+        byTeam.get(p.org).push({
+          name: p.name,
+          playerId: p.pid,
+          matches: p.matches,
+          totalPoints: Number(p.totalPoints.toFixed(2))
+        });
+      }
+
+      const teams = Array.from(byTeam.entries())
+        .sort((a,b)=> a[0].localeCompare(b[0]))
+        .map(([org, players]) => ({
+          teamName: org,
+          players: players.sort((a,b)=> a.name.localeCompare(b.name))
+        }));
+
+      return {
+        date: String(exportData?.dateKey || exportData?.date || ''),
+        teams
+      };
+    }
+
     // Admin gate
     const adminToolbar = document.getElementById('adminToolbar');
     const toolbarStatus = document.getElementById('adminToolbarStatus');
@@ -254,6 +340,7 @@
       }catch(err){ toolbarStatus.textContent = 'Error: ' + (err.message || err); }
     };
 
+    // === UPDATED: Export button now downloads team → players → matches breakdown JSON ===
     document.getElementById('btnExport').onclick = async () => {
       const dk = (dayKey.value || '').trim();
       if (!/^\d{8}$/.test(dk)) { toolbarStatus.textContent = 'Enter a date like 20250904'; return; }
@@ -261,10 +348,14 @@
       try{
         const call = httpsCallable(functions, 'adminExportScores');
         const { data } = await call({ tid: CURRENT_TID, dateKey: dk });
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+
+        // Transform the raw export → team/player breakdown (selected players only)
+        const breakdown = buildTeamPlayerBreakdown(data);
+
+        const blob = new Blob([JSON.stringify(breakdown, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `if_${CURRENT_TID}_${dk}_export.json`;
+        a.download = `if_${CURRENT_TID}_${dk}_team_player_breakdown.json`;
         document.body.appendChild(a);
         a.click();
         a.remove();
